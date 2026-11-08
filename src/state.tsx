@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { EditorView } from '@codemirror/view';
 import { setDiagnostics } from '@codemirror/lint';
 import { toast as sonnerToast } from 'sonner';
-import { api, type QueryResponse, type SavedQuery, type SavedQueryInput, type Schema, type Status, type TxStatus } from './api';
+import { api, type DatabasesResponse, type QueryResponse, type SavedQuery, type SavedQueryInput, type Schema, type Status, type TxStatus } from './api';
 
 // Shared app state: editor contents, query execution, schema and progress.
 
@@ -58,6 +58,13 @@ type Ctx = {
   setNavTab: (t: 'lessons' | 'saved') => void;
   saveDialogOpen: boolean;
   setSaveDialogOpen: (open: boolean) => void;
+  // databases
+  databases: DatabasesResponse | null;
+  refreshDatabases: () => Promise<void>;
+  /** Apply a databases response from the server (after create / switch / delete). */
+  applyDatabases: (d: DatabasesResponse) => Promise<void>;
+  terminalOpen: boolean;
+  setTerminalOpen: (open: boolean | ((o: boolean) => boolean)) => void;
 };
 
 const PlaygroundContext = createContext<Ctx | null>(null);
@@ -113,6 +120,8 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
   const [savedViewId, setSavedViewId] = useState<string | null>(() => (location.hash.startsWith('#saved/') ? decodeURIComponent(location.hash.slice(7)) : null));
   const [navTab, setNavTabState] = useState<'lessons' | 'saved'>(() => (location.hash.startsWith('#saved/') ? 'saved' : load('sqlpg.navTab', 'lessons')));
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [databases, setDatabases] = useState<DatabasesResponse | null>(null);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const editorView = useRef<EditorView | null>(null);
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -191,11 +200,20 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
     [linkedSavedId, setLinkedSavedId],
   );
 
+  const refreshDatabases = useCallback(async () => {
+    try {
+      setDatabases(await api.databases.list());
+    } catch {
+      /* the status chip already reports connection problems */
+    }
+  }, []);
+
   useEffect(() => {
     refreshStatus();
     refreshSchema();
     refreshSaved();
-  }, [refreshSchema, refreshStatus, refreshSaved]);
+    refreshDatabases();
+  }, [refreshSchema, refreshStatus, refreshSaved, refreshDatabases]);
 
   const clearDiagnostics = () => {
     const v = editorView.current;
@@ -292,8 +310,23 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
     setRuns({});
     setTxStatus({ A: 'idle', B: 'idle' });
     clearDiagnostics();
-    await Promise.all([refreshSchema(), refreshStatus()]);
-  }, [refreshSchema, refreshStatus]);
+    await Promise.all([refreshSchema(), refreshStatus(), refreshDatabases()]);
+  }, [refreshSchema, refreshStatus, refreshDatabases]);
+
+  const applyDatabases = useCallback(
+    async (d: DatabasesResponse) => {
+      const changed = d.active !== databases?.active;
+      setDatabases(d);
+      if (changed) {
+        // results from the previous database no longer apply
+        setRuns({});
+        setTxStatus({ A: 'idle', B: 'idle' });
+        clearDiagnostics();
+        await Promise.all([refreshSchema(), refreshStatus()]);
+      }
+    },
+    [databases?.active, refreshSchema, refreshStatus],
+  );
 
   const value = useMemo<Ctx>(
     () => ({
@@ -337,8 +370,13 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
       setNavTab,
       saveDialogOpen,
       setSaveDialogOpen,
+      databases,
+      refreshDatabases,
+      applyDatabases,
+      terminalOpen,
+      setTerminalOpen,
     }),
-    [sql, setSql, session, txStatus, runningSessions, runs, runEditor, cancel, loadSql, getEditorText, schema, schemaError, refreshSchema, status, statusError, refreshStatus, solved, markSolved, focusTable, history, toast, afterReset, saved, savedLoaded, savedError, refreshSaved, createSaved, updateSaved, deleteSaved, linkedSavedId, setLinkedSavedId, savedViewId, navTab, setNavTab, saveDialogOpen],
+    [sql, setSql, session, txStatus, runningSessions, runs, runEditor, cancel, loadSql, getEditorText, schema, schemaError, refreshSchema, status, statusError, refreshStatus, solved, markSolved, focusTable, history, toast, afterReset, saved, savedLoaded, savedError, refreshSaved, createSaved, updateSaved, deleteSaved, linkedSavedId, setLinkedSavedId, savedViewId, navTab, setNavTab, saveDialogOpen, databases, refreshDatabases, applyDatabases, terminalOpen],
   );
   return <PlaygroundContext.Provider value={value}>{children}</PlaygroundContext.Provider>;
 }

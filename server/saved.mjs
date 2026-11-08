@@ -5,14 +5,13 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dataDir } from './data-dir.mjs';
 
-const DEFAULT_DIR = fileURLToPath(new URL('../data', import.meta.url));
-const LIMITS = { title: 200, notes: 50_000, sql: 200_000, lessonId: 100 };
+const LIMITS = { title: 200, notes: 50_000, sql: 200_000, lessonId: 100, database: 63 };
 
 class BadRequest extends Error {}
 
-export function savedQueriesRouter(dir = process.env.SQLPG_DATA_DIR || DEFAULT_DIR) {
+export function savedQueriesRouter(dir = dataDir) {
   const file = join(dir, 'saved-queries.json');
 
   // A broken file is reported, never silently overwritten.
@@ -40,7 +39,7 @@ export function savedQueriesRouter(dir = process.env.SQLPG_DATA_DIR || DEFAULT_D
       if (required) throw new BadRequest(`"${key}" is required`);
       return undefined;
     }
-    if (key === 'lessonId' && v === null) return null;
+    if ((key === 'lessonId' || key === 'database') && v === null) return null;
     if (typeof v !== 'string') throw new BadRequest(`"${key}" must be a string`);
     if (v.length > LIMITS[key]) throw new BadRequest(`"${key}" is too long (max ${LIMITS[key]} characters)`);
     return key === 'title' ? v.trim() : v;
@@ -71,6 +70,7 @@ export function savedQueriesRouter(dir = process.env.SQLPG_DATA_DIR || DEFAULT_D
         notes: field(req.body, 'notes') ?? '',
         sql: field(req.body, 'sql', { required: true }),
         lessonId: field(req.body, 'lessonId') ?? null,
+        database: field(req.body, 'database') ?? null,
         createdAt: now,
         updatedAt: now,
       };
@@ -86,7 +86,7 @@ export function savedQueriesRouter(dir = process.env.SQLPG_DATA_DIR || DEFAULT_D
       const i = items.findIndex((q) => q.id === req.params.id);
       if (i === -1) throw notFound();
       const patch = {};
-      for (const key of ['title', 'notes', 'sql', 'lessonId']) {
+      for (const key of ['title', 'notes', 'sql', 'lessonId', 'database']) {
         const v = field(req.body, key);
         if (v !== undefined) patch[key] = v;
       }

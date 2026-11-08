@@ -12,6 +12,7 @@ import {
   PanelLeftOpen,
   PanelRightOpen,
   RotateCcw,
+  SquareTerminal,
   Sun,
   Trophy,
 } from 'lucide-react';
@@ -23,6 +24,8 @@ import { SchemaPanel } from './components/SchemaPanel';
 import { IconButton } from './components/PanelHeader';
 import { SavedList, SavedQueryView } from './components/Notebook';
 import { SaveQueryDialog } from './components/SaveQueryDialog';
+import { DatabaseSwitcher } from './components/Databases';
+import { RootTerminal } from './components/RootTerminal';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useDrag, useStoredNumber } from './components/layout';
 import { api } from './api';
@@ -54,7 +57,7 @@ export function App() {
 const NAV_W = 256;
 
 function Shell() {
-  const { navTab, setNavTab, savedViewId, setSavedViewId, saved, savedLoaded } = usePlayground();
+  const { navTab, setNavTab, savedViewId, setSavedViewId, saved, savedLoaded, terminalOpen, setTerminalOpen } = usePlayground();
   const [lessonId, setLessonId] = useState<string>(() => {
     const fromHash = location.hash.slice(1);
     if (lessons.some((l) => l.id === fromHash)) return fromHash;
@@ -117,12 +120,37 @@ function Shell() {
   const lessonDrag = useDrag((dx, start) => setLessonW(Math.max(320, Math.min(start + dx, window.innerWidth - sideW - 400))), lessonWidth);
   const schemaDrag = useDrag((dx, start) => setSchemaW(Math.max(220, Math.min(start - dx, 560))), schemaW);
 
+  // root terminal: a panel docked at the bottom, toggled with Ctrl+`
+  const [termMounted, setTermMounted] = useState(false);
+  useEffect(() => {
+    if (terminalOpen) setTermMounted(true);
+  }, [terminalOpen]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.metaKey && !e.altKey && (e.key === '`' || e.code === 'Backquote')) {
+        e.preventDefault();
+        setTerminalOpen((o) => !o);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setTerminalOpen]);
+  const [termH, setTermH] = useStoredNumber('sqlpg.terminalH', 320);
+  const [winH, setWinH] = useState(window.innerHeight);
+  useEffect(() => {
+    const onResize = () => setWinH(window.innerHeight);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const termHeight = Math.max(160, Math.min(termH, winH - 260));
+  const termDrag = useDrag((dy, start) => setTermH(Math.max(160, Math.min(start - dy, window.innerHeight - 260))), termHeight, 'y');
+
   return (
     <div className="flex h-full flex-col bg-background">
       <TopBar />
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {navOpen ? (
-          <aside className="flex flex-none flex-col border-r bg-surface" style={{ width: NAV_W }} data-panel="nav">
+          <aside className="flex min-h-0 flex-none flex-col overflow-hidden border-r bg-surface" style={{ width: NAV_W }} data-panel="nav">
             <Tabs value={navTab} onValueChange={(v) => setNavTab(v as 'lessons' | 'saved')} className="flex min-h-0 flex-1 flex-col gap-0">
               <div className="flex h-11 flex-none items-center gap-2 border-b px-2.5">
                 <TabsList className="h-8 flex-1">
@@ -149,7 +177,7 @@ function Shell() {
         ) : (
           <Rail side="left" label="Lessons" icon={<PanelLeftOpen />} onOpen={() => setNavOpen(true)} />
         )}
-        <section className="flex min-w-0 flex-none flex-col bg-card" style={{ width: lessonWidth }} data-panel="lesson">
+        <section className="flex min-h-0 min-w-0 flex-none flex-col overflow-hidden bg-card" style={{ width: lessonWidth }} data-panel="lesson">
           {viewing ? (
             <SavedQueryView query={viewing} backTo={`“${lesson.title}”`} onBack={() => setSavedViewId(null)} goLesson={go} />
           ) : (
@@ -157,13 +185,13 @@ function Shell() {
           )}
         </section>
         <div className={cn('gutter', lessonDrag.dragging && 'dragging')} onMouseDown={lessonDrag.onMouseDown} />
-        <main className="flex min-w-0 flex-1 flex-col bg-card" data-panel="workspace">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-card" data-panel="workspace">
           <Workspace />
         </main>
         {schemaOpen ? (
           <>
             <div className={cn('gutter', schemaDrag.dragging && 'dragging')} onMouseDown={schemaDrag.onMouseDown} />
-            <aside className="flex flex-none flex-col bg-surface" style={{ width: schemaW }} data-panel="schema">
+            <aside className="flex min-h-0 flex-none flex-col overflow-hidden bg-surface" style={{ width: schemaW }} data-panel="schema">
               <SchemaPanel onHide={() => setSchemaOpen(false)} />
             </aside>
           </>
@@ -171,6 +199,14 @@ function Shell() {
           <Rail side="right" label="Schema" icon={<PanelRightOpen />} onOpen={() => setSchemaOpen(true)} />
         )}
       </div>
+      {termMounted && (
+        <>
+          <div className={cn('gutter h', termDrag.dragging && 'dragging', !terminalOpen && 'hidden')} onMouseDown={termDrag.onMouseDown} />
+          <div className={cn('relative z-20 flex-none overflow-hidden', !terminalOpen && 'hidden')} style={{ height: termHeight }} data-panel="terminal">
+            <RootTerminal onClose={() => setTerminalOpen(false)} />
+          </div>
+        </>
+      )}
       <SaveQueryDialog lesson={lesson} />
     </div>
   );
@@ -284,7 +320,9 @@ function ThemeToggle() {
 }
 
 function TopBar() {
-  const { status, statusError, solved, toast, afterReset, refreshStatus } = usePlayground();
+  const { status, statusError, solved, toast, afterReset, refreshStatus, databases, terminalOpen, setTerminalOpen } = usePlayground();
+  const activeDb = databases?.databases.find((d) => d.name === databases.active);
+  const canReset = !activeDb || activeDb.kind !== 'other';
   const [confirming, setConfirming] = useState(false);
   const [resetting, setResetting] = useState(false);
   const total = lessons.reduce((s, l) => s + l.exercises.length, 0);
@@ -301,7 +339,7 @@ function TopBar() {
     try {
       const r = await api.reset();
       await afterReset();
-      toast(`Database restored to its original state in ${(r.durationMs / 1000).toFixed(1)}s`);
+      toast(`“${r.database}” restored to how it started in ${(r.durationMs / 1000).toFixed(1)}s`);
     } catch (e) {
       toast(`Reset failed: ${(e as Error).message}`, 'err');
     } finally {
@@ -337,44 +375,56 @@ function TopBar() {
           <TooltipContent>Exercises solved (saved in this browser)</TooltipContent>
         </Tooltip>
 
-        {status ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="hidden items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-[12.5px] md:flex">
-                <span className="relative flex size-2">
-                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-40" />
-                  <span className="relative inline-flex size-2 rounded-full bg-success" />
-                </span>
-                <span className="font-medium">PostgreSQL {status.serverVersion.split(' ')[0]}</span>
-                <span className="text-muted-foreground">
-                  {status.database}@localhost:{status.port}
-                </span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              Connected as <b>{status.user}</b> to database "{status.database}" at {status.host}:{status.port}
-            </TooltipContent>
-          </Tooltip>
-        ) : (
-          <div className="flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-[12.5px]">
-            <span className={cn('size-2 rounded-full', statusError ? 'bg-destructive' : 'animate-pulse bg-muted-foreground')} />
-            {statusError ? 'Database unreachable' : 'Connecting…'}
-          </div>
-        )}
+        <DatabaseSwitcher />
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Root terminal"
+              aria-pressed={terminalOpen}
+              onClick={() => setTerminalOpen((o) => !o)}
+              className={cn(terminalOpen && 'bg-accent text-foreground')}
+              data-action="toggle-terminal"
+            >
+              <SquareTerminal />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Root terminal (Ctrl+`)</TooltipContent>
+        </Tooltip>
 
         <ThemeToggle />
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setConfirming(true)}
-          disabled={resetting}
-          className="text-destructive hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/15"
-        >
-          <RotateCcw /> Reset DB
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span tabIndex={canReset ? undefined : 0}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirming(true)}
+                disabled={resetting || !canReset}
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/15"
+                data-action="reset-db"
+              >
+                <RotateCcw /> Reset DB
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-64">
+            {canReset
+              ? `Restore “${status?.database ?? 'the database'}” to how it started`
+              : 'This database was created outside the database menu, so the playground does not know how it started. Delete it, or change it in the root terminal.'}
+          </TooltipContent>
+        </Tooltip>
       </header>
 
+      {status && status.practiceDatabase === undefined && (
+        <div className="flex items-center gap-2 border-b border-warning/30 bg-warning-soft px-4 py-2 text-[13px] text-warning" data-testid="restart-banner">
+          <CircleAlert className="size-4 flex-none" />
+          The app was updated while its server was running. Stop <code className="font-mono">npm run dev</code> (Ctrl+C) and start it again to load the new server.
+        </div>
+      )}
       {statusError && (
         <div className="flex items-center gap-2 border-b border-destructive/20 bg-danger-soft px-4 py-2 text-[13px] text-destructive">
           <CircleAlert className="size-4" />
@@ -385,13 +435,14 @@ function TopBar() {
       <AlertDialog open={confirming} onOpenChange={(o) => !resetting && setConfirming(o)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Reset the practice database?</AlertDialogTitle>
+            <AlertDialogTitle>{activeDb && activeDb.kind !== 'practice' ? `Reset “${activeDb.name}”?` : 'Reset the practice database?'}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2">
                 <p>
-                  This drops the <code className="rounded bg-muted px-1 py-0.5 text-[0.85em] text-foreground">learn</code> database and recreates it from the
-                  original seed. Every table, row, index and constraint goes back to exactly how it started; anything you created, changed or deleted is lost, and
-                  open transactions in Session A/B are closed.
+                  This drops the <code className="rounded bg-muted px-1 py-0.5 text-[0.85em] text-foreground">{status?.database ?? 'learn'}</code> database and
+                  recreates it{' '}
+                  {activeDb?.kind === 'user' ? (activeDb.origin === 'sample' ? 'as a fresh copy of the sample data' : 'empty, with no tables') : 'from the original seed'}.
+                  Anything you created, changed or deleted in it is lost, and open transactions in Session A/B are closed.
                 </p>
                 <p>Your editor contents, saved queries and exercise progress are kept.</p>
               </div>

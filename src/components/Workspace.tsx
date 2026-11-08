@@ -35,7 +35,20 @@ export function Workspace() {
   runRef.current = runEditor;
   const [editorHeight, setEditorHeight] = useStoredNumber('sqlpg.editorH', 300);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const drag = useDrag((dy, start) => setEditorHeight(Math.max(90, Math.min(start + dy, (wrapRef.current?.clientHeight ?? 800) - 140))), editorHeight, 'y');
+  const editorWrapRef = useRef<HTMLDivElement>(null);
+  // room for the editor = panel height - everything above it - at least 120px for results
+  const [maxEditor, setMaxEditor] = useState(10_000);
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const measure = () => setMaxEditor(Math.max(80, wrap.clientHeight - (editorWrapRef.current?.offsetTop ?? 0) + wrap.offsetTop - 121));
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrap);
+    measure();
+    return () => ro.disconnect();
+  }, []);
+  const shownEditorHeight = Math.min(editorHeight, maxEditor);
+  const drag = useDrag((dy, start) => setEditorHeight(Math.max(90, Math.min(start + dy, maxEditor))), shownEditorHeight, 'y');
 
   const extensions = useMemo(() => {
     const schemaMap: Record<string, string[]> = {};
@@ -189,7 +202,7 @@ export function Workspace() {
         </div>
       )}
 
-      <div className="editor-wrap relative min-h-20 flex-none overflow-hidden bg-code" style={{ height: editorHeight }}>
+      <div ref={editorWrapRef} className="editor-wrap relative min-h-20 flex-none overflow-hidden bg-code" style={{ height: shownEditorHeight }}>
         <CodeMirror
           value={sql}
           height="100%"

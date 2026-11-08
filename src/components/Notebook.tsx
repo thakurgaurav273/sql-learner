@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, BookmarkPlus, Bookmark, Download, FileCode2, Loader2, MoreHorizontal, NotebookPen, PencilLine, Play, Search, SquarePen, Trash2, X } from 'lucide-react';
+import { ArrowLeft, BookmarkPlus, Bookmark, Database, Download, FileCode2, Loader2, MoreHorizontal, NotebookPen, PencilLine, Play, Search, SquarePen, Trash2, X } from 'lucide-react';
+import { useSwitch } from './Databases';
 import type { SavedQuery } from '../api';
 import { lessons } from '../content';
 import { usePlayground } from '../state';
@@ -57,7 +58,8 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(
 // Sidebar list ("Saved" tab)
 // ---------------------------------------------------------------------------
 export function SavedList() {
-  const { saved, savedLoaded, savedError, savedViewId, setSavedViewId, linkedSavedId, sql, setSaveDialogOpen, toast } = usePlayground();
+  const { saved, savedLoaded, savedError, savedViewId, setSavedViewId, linkedSavedId, sql, setSaveDialogOpen, toast, status } = usePlayground();
+  const practiceDb = status?.practiceDatabase ?? 'learn';
   const [filter, setFilter] = useState('');
   const f = filter.trim().toLowerCase();
   const items = useMemo(
@@ -144,7 +146,13 @@ export function SavedList() {
                     <span className="truncate font-mono text-[11px] text-muted-foreground/80">{firstLine(q.sql)}</span>
                   )}
                   <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground/80">
-                    {lt && <span className="max-w-[60%] truncate rounded bg-muted px-1.5 py-px text-[10.5px]">{lt}</span>}
+                    {q.database && q.database !== practiceDb && (
+                      <span className="flex max-w-[45%] items-center gap-1 truncate rounded bg-muted px-1.5 py-px font-mono text-[10.5px]">
+                        <Database className="size-2.5 flex-none" />
+                        {q.database}
+                      </span>
+                    )}
+                    {lt && <span className="max-w-[50%] truncate rounded bg-muted px-1.5 py-px text-[10.5px]">{lt}</span>}
                     <span>{timeAgo(q.updatedAt)}</span>
                   </span>
                 </button>
@@ -164,7 +172,10 @@ export function SavedList() {
 // Middle panel: one saved query with its notes
 // ---------------------------------------------------------------------------
 export function SavedQueryView({ query, backTo, onBack, goLesson }: { query: SavedQuery; backTo: string; onBack: () => void; goLesson: (id: string) => void }) {
-  const { loadSql, linkedSavedId, sql, updateSaved, deleteSaved, toast, setSaveDialogOpen } = usePlayground();
+  const { loadSql, linkedSavedId, sql, updateSaved, deleteSaved, toast, setSaveDialogOpen, status, databases } = usePlayground();
+  const sw = useSwitch();
+  const dbExists = !!query.database && !!databases?.databases.some((d) => d.name === query.database);
+  const otherDb = !!query.database && !!status && query.database !== status.database;
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(query.title);
   const [notes, setNotes] = useState(query.notes);
@@ -230,7 +241,26 @@ export function SavedQueryView({ query, backTo, onBack, goLesson }: { query: Sav
               </button>
             </>
           )}
+          {query.database && (
+            <>
+              <span className="text-border">•</span>
+              <span className="flex items-center gap-1">
+                <Database className="size-3" /> Database: <code className="font-mono">{query.database}</code>
+                {!dbExists && databases && <span className="text-warning">(deleted)</span>}
+              </span>
+            </>
+          )}
         </div>
+        {otherDb && dbExists && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/25 bg-brand-soft/60 px-3 py-2 text-[12.5px]" data-testid="saved-db-hint">
+            <Database className="size-3.5 text-primary" />
+            Written for <code className="font-mono">{query.database}</code>; the editor is using <code className="font-mono">{status!.database}</code>.
+            <Button size="xs" variant="outline" className="ml-auto bg-card" onClick={() => sw.request(query.database!)} data-action="switch-to-saved-db">
+              Switch to {query.database}
+            </Button>
+          </div>
+        )}
+        {sw.confirm}
 
         {editing ? (
           <Input

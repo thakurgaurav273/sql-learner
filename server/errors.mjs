@@ -79,6 +79,6 @@ export const TIPS = {
   '40001': 'Serialization failure: under REPEATABLE READ / SERIALIZABLE, a concurrent change conflicts with this transaction. Roll back and retry.',
   '2BP01': 'Other objects (e.g. foreign keys or views) depend on this one. Drop them first, or add CASCADE if you really mean it.',
   '42P07': 'A table with this name already exists. Use DROP TABLE first, CREATE TABLE IF NOT EXISTS, or pick another name.',
-  '42501': 'Permission denied. The practice user can do anything inside the practice database, but not server-wide admin actions.',
+  '42501': 'Permission denied. The practice user can do anything inside its databases, but not server-wide admin actions. To create, switch or delete databases, use the database menu in the top bar.',
   '3D000': 'That database does not exist. This playground always works in the "learn" database.',
 };

@@ -3,8 +3,10 @@
 //
 // Databases inside the Docker container:
 //   learn_template  built from db/seed/*.sql; never connected to directly (ALLOW_CONNECTIONS false)
-//   learn           your practice database - the SQL editor runs here
+//   learn           your practice database - the SQL editor runs here by default
 //   learn_check     pristine copy used only to check exercise answers (in rolled-back transactions)
+//   <your own>      databases you create from the database menu (empty, or a copy of the
+//                   sample data). The editor and schema panel use the "active" database.
 //
 // Your queries run as the role "learner": it owns the practice database, so it may
 // create/alter/drop anything inside it, but it is not a superuser and cannot touch
@@ -14,10 +16,11 @@
 import pg from 'pg';
 import Cursor from 'pg-cursor';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { splitStatements, mayReturnRows, isTransactionControl, firstKeyword } from './sql-split.mjs';
 import { SQLSTATE, TIPS } from './errors.mjs';
+import { dataDir } from './data-dir.mjs';
 
 export const config = {
   host: process.env.PG_HOST || '127.0.0.1',
@@ -39,11 +42,11 @@ const SEED_FORMAT_VERSION = 2; // bump to force a template rebuild after changin
 
 // Return every value exactly as Postgres prints it (like psql does) instead of converting
 // to JS Dates/numbers - so 12.50 stays "12.50" and dates are not shifted by time zones.
-const rawTypes = {
+export const rawTypes = {
   getTypeParser: (oid) => (oid === 16 ? (v) => (v === 't' ? 'true' : v === 'f' ? 'false' : v) : (v) => v),
 };
 
-const adminConn = (database) => ({
+export const adminConn = (database) => ({
   host: config.host,
   port: config.port,
   user: config.adminUser,
@@ -62,17 +65,19 @@ const learnerConn = (database, name = 'sql-playground') => ({
 });
 
 let adminPool = null;
-let learnPool = null; // used for schema introspection, never for your queries
+let learnPool = null; // connected to the active database; used for schema introspection, never for your queries
+let activeDb = config.db; // the database the editor sessions and the schema panel use
 let serverVersion = null;
 const typeNames = new Map();
 
 function newLearnPool() {
-  const pool = new pg.Pool({ ...learnerConn(config.db, 'sql-playground-schema'), max: 3, idleTimeoutMillis: 10000 });
+  const pool = new pg.Pool({ ...learnerConn(activeDb, 'sql-playground-schema'), max: 3, idleTimeoutMillis: 10000 });
   pool.on('error', () => {}); // connections are killed on purpose during Reset DB
   return pool;
 }
 
-const ident = (name) => `"${name.replace(/"/g, '""')}"`;
+export const ident = (name) => `"${name.replace(/"/g, '""')}"`;
+const literal = (s) => `'${String(s).replace(/'/g, "''")}'`;
 
 // ---------------------------------------------------------------------------
 // Bootstrap
@@ -170,6 +175,8 @@ async function ensureTemplate(log) {
   await buildTemplate(hash, log);
   await dropDatabase(config.db);
   await dropDatabase(config.checkDb);
+  await cloneTemplate(config.db);
+  await cloneTemplate(config.checkDb);
   return true;
 }
 
@@ -193,6 +200,8 @@ export async function bootstrap(log = console.log) {
   if (!(await dbExists(config.db))) await cloneTemplate(config.db);
   if (!(await dbExists(config.checkDb))) await cloneTemplate(config.checkDb);
 
+  const wanted = loadSettings().activeDatabase;
+  if (wanted && wanted !== config.db && (await isSwitchable(wanted))) activeDb = wanted;
   learnPool = newLearnPool();
   serverVersion = (await adminPool.query('SHOW server_version')).rows[0].server_version;
   const types = await learnPool.query('SELECT oid::int AS oid, format_type(oid, NULL) AS name FROM pg_type');
@@ -207,7 +216,18 @@ export async function bootstrap(log = console.log) {
 const SESSION_NAMES = ['A', 'B'];
 const sessions = new Map(); // name -> Promise<{client, alive}>
 const connected = new Map(); // name -> {client, alive} once connected
-let resetPromise = null;
+
+// Admin operations (reset, create, switch, delete) run one at a time; queries and
+// schema requests wait for the one in progress.
+let adminQueue = Promise.resolve();
+let adminBusy = 0;
+function exclusive(fn) {
+  adminBusy++;
+  const p = adminQueue.then(fn).finally(() => adminBusy--);
+  adminQueue = p.catch(() => {});
+  return p;
+}
+const settle = () => (adminBusy ? adminQueue : null);
 
 async function getSession(name) {
   if (!SESSION_NAMES.includes(name)) throw new Error(`Unknown session ${name}`);
@@ -217,7 +237,7 @@ async function getSession(name) {
     if (s && s.alive) return s;
   }
   const p = (async () => {
-    const client = new pg.Client(learnerConn(config.db, `sql-playground-session-${name}`));
+    const client = new pg.Client(learnerConn(activeDb, `sql-playground-session-${name}`));
     const s = { client, alive: true, name };
     client.on('error', () => (s.alive = false));
     client.on('end', () => (s.alive = false));
@@ -337,7 +357,7 @@ export function formatError(err, statement, index, count) {
 }
 
 export async function runScript(sessionName, sql) {
-  if (resetPromise) await resetPromise.catch(() => {});
+  await settle();
   const statements = splitStatements(sql);
   if (!statements.length) {
     return { results: [], error: { message: 'Nothing to run - the editor only contains whitespace or comments.' } };
@@ -369,7 +389,11 @@ export async function cancelSession(sessionName) {
   const p = sessions.get(sessionName);
   const s = p ? await p.catch(() => null) : null;
   if (!s || !s.alive) return false;
-  const r = await adminPool.query('SELECT pg_cancel_backend($1) AS ok', [s.client.processID]);
+  return cancelBackend(s.client.processID);
+}
+
+export async function cancelBackend(pid) {
+  const r = await adminPool.query('SELECT pg_cancel_backend($1) AS ok', [pid]);
   return r.rows[0].ok === 'true' || r.rows[0].ok === true;
 }
 
@@ -377,23 +401,183 @@ export async function cancelSession(sessionName) {
 // Reset
 // ---------------------------------------------------------------------------
 
-export function resetDatabase(log = console.log) {
-  if (resetPromise) return resetPromise;
-  resetPromise = (async () => {
+// Reset restores a database to how it started: the practice database (and the
+// exercise-check copy) from the template; your own databases back to empty or to
+// the sample data, depending on how they were created.
+export function resetDatabase(log = console.log, name = activeDb) {
+  return exclusive(async () => {
     const t0 = Date.now();
-    await closeAllSessions();
-    const oldPool = learnPool;
-    learnPool = null;
-    await oldPool?.end().catch(() => {});
-    await ensureTemplate(log); // rebuilds the template too if the seed files changed
-    await dropDatabase(config.db);
-    await cloneTemplate(config.db);
-    await dropDatabase(config.checkDb);
-    await cloneTemplate(config.checkDb);
-    learnPool = newLearnPool();
-    return { ok: true, durationMs: Date.now() - t0 };
-  })();
-  return resetPromise.finally(() => (resetPromise = null));
+    const isActive = name === activeDb;
+    if (name === config.db) {
+      if (isActive) await detachActive();
+      await ensureTemplate(log); // rebuilds the template too if the seed files changed
+      await dropDatabase(config.db);
+      await cloneTemplate(config.db);
+      await dropDatabase(config.checkDb);
+      await cloneTemplate(config.checkDb);
+    } else {
+      const info = await userDbInfo(name);
+      if (!info) throw userError(`“${name}” can't be reset: it wasn't created from the database menu, so the playground doesn't know how it started.`, 400);
+      if (isActive) await detachActive();
+      if (info.origin === 'sample') await ensureTemplate(log);
+      await dropDatabase(name);
+      await createUserDb(name, info.origin, info.createdAt);
+    }
+    if (isActive) attachActive();
+    return { ok: true, database: name, durationMs: Date.now() - t0 };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Your own databases
+// ---------------------------------------------------------------------------
+
+const USER_DB_TAG = 'sqlpg-user:';
+const NAME_RE = /^[a-z][a-z0-9_]{0,39}$/;
+// databases the app needs; they never appear in the database menu
+export const INTERNAL_DBS = new Set(['postgres', 'template0', 'template1', config.templateDb, config.checkDb]);
+const userError = (message, status = 400) => Object.assign(new Error(message), { status });
+
+const settingsFile = () => join(dataDir, 'settings.json');
+function loadSettings() {
+  try {
+    return JSON.parse(readFileSync(settingsFile(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+function saveSettings(patch) {
+  try {
+    mkdirSync(dataDir, { recursive: true });
+    const tmp = settingsFile() + '.tmp';
+    writeFileSync(tmp, JSON.stringify({ ...loadSettings(), ...patch }, null, 2) + '\n');
+    renameSync(tmp, settingsFile());
+  } catch {
+    /* not critical: the practice database is used after a restart */
+  }
+}
+
+async function userDbInfo(name) {
+  const r = await adminPool.query(`SELECT shobj_description(oid, 'pg_database') AS comment FROM pg_database WHERE datname = $1`, [name]);
+  const c = r.rows[0]?.comment;
+  if (!c || !c.startsWith(USER_DB_TAG)) return null;
+  try {
+    return JSON.parse(c.slice(USER_DB_TAG.length));
+  } catch {
+    return { origin: 'empty', createdAt: null };
+  }
+}
+
+async function createUserDb(name, origin, createdAt) {
+  const template = origin === 'sample' ? config.templateDb : 'template0';
+  await adminPool.query(`CREATE DATABASE ${ident(name)} TEMPLATE ${ident(template)} OWNER ${ident(config.learnerUser)}`);
+  await adminPool.query(`COMMENT ON DATABASE ${ident(name)} IS ${literal(USER_DB_TAG + JSON.stringify({ origin, createdAt }))}`);
+}
+
+async function isSwitchable(name) {
+  if (INTERNAL_DBS.has(name)) return false;
+  return dbExists(name);
+}
+
+async function detachActive() {
+  await closeAllSessions();
+  const old = learnPool;
+  learnPool = null;
+  await old?.end().catch(() => {});
+}
+function attachActive() {
+  learnPool = newLearnPool();
+  // type ids of user-defined types differ per database
+  for (const oid of [...typeNames.keys()]) if (oid >= 16384) typeNames.delete(oid);
+}
+async function switchTo(name) {
+  if (name === activeDb) return;
+  await detachActive();
+  activeDb = name;
+  attachActive();
+  saveSettings({ activeDatabase: name });
+}
+
+/** Every database you can work in: the practice one, the ones you created, and any other non-internal database. */
+export async function listDatabases() {
+  const r = await adminPool.query(`
+    SELECT d.datname AS name, shobj_description(d.oid, 'pg_database') AS comment,
+           pg_database_size(d.oid)::bigint AS size, pg_get_userbyid(d.datdba) AS owner
+    FROM pg_database d
+    WHERE NOT d.datistemplate
+    ORDER BY d.datname`);
+  const databases = [];
+  for (const row of r.rows) {
+    if (INTERNAL_DBS.has(row.name)) continue;
+    let kind = 'other';
+    let origin = null;
+    let createdAt = null;
+    if (row.name === config.db) {
+      kind = 'practice';
+      origin = 'sample';
+    } else if (row.comment?.startsWith(USER_DB_TAG)) {
+      kind = 'user';
+      try {
+        ({ origin, createdAt } = JSON.parse(row.comment.slice(USER_DB_TAG.length)));
+      } catch {
+        origin = 'empty';
+      }
+    }
+    databases.push({ name: row.name, kind, origin, createdAt, owner: row.owner, sizeBytes: Number(row.size) });
+  }
+  const rank = { practice: 0, user: 1, other: 2 };
+  databases.sort((a, b) => rank[a.kind] - rank[b.kind] || (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.name.localeCompare(b.name));
+  return { active: activeDb, practice: config.db, databases };
+}
+
+export function createDatabase({ name, origin = 'empty', use = false } = {}, log = console.log) {
+  name = typeof name === 'string' ? name.trim() : '';
+  if (!NAME_RE.test(name)) throw userError('Use 1-40 lowercase letters, digits or underscores, starting with a letter (for example my_shop).');
+  if (INTERNAL_DBS.has(name) || name === config.db || name.startsWith('pg_')) throw userError(`“${name}” is reserved. Pick another name.`);
+  if (origin !== 'empty' && origin !== 'sample') throw userError('origin must be "empty" or "sample"');
+  return exclusive(async () => {
+    if (await dbExists(name)) throw userError(`A database called “${name}” already exists.`, 409);
+    if (origin === 'sample') await ensureTemplate(log);
+    await createUserDb(name, origin, new Date().toISOString());
+    if (use) await switchTo(name);
+    return listDatabases();
+  });
+}
+
+export function useDatabase(name) {
+  return exclusive(async () => {
+    if (typeof name !== 'string' || !(await isSwitchable(name))) throw userError(`There is no database called “${name}” to switch to.`, 404);
+    await switchTo(name);
+    return listDatabases();
+  });
+}
+
+export function deleteDatabase(name) {
+  return exclusive(async () => {
+    if (name === config.db) throw userError("The practice database can't be deleted. Use Reset DB to restore it instead.");
+    if (typeof name !== 'string' || !(await isSwitchable(name))) throw userError(`There is no database called “${name}”.`, 404);
+    if (name === activeDb) await switchTo(config.db);
+    await dropDatabase(name);
+    return listDatabases();
+  });
+}
+
+/** After a command in the root terminal: if the active database was dropped, fall back to the practice database. */
+export function healActiveDb() {
+  return exclusive(async () => {
+    if (activeDb !== config.db && !(await dbExists(activeDb))) {
+      await switchTo(config.db);
+      return true;
+    }
+    if (activeDb === config.db && !(await dbExists(config.db))) {
+      await detachActive();
+      await ensureTemplate(console.log);
+      if (!(await dbExists(config.db))) await cloneTemplate(config.db);
+      attachActive();
+      return true;
+    }
+    return false;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -401,7 +585,7 @@ export function resetDatabase(log = console.log) {
 // ---------------------------------------------------------------------------
 
 export async function getSchema() {
-  if (resetPromise) await resetPromise.catch(() => {});
+  await settle();
   const pool = learnPool;
   const rels = (
     await pool.query(`
@@ -518,7 +702,8 @@ export async function getStatus() {
   return {
     ok: true,
     serverVersion,
-    database: config.db,
+    database: activeDb,
+    practiceDatabase: config.db,
     host: config.host,
     port: config.port,
     user: config.learnerUser,
@@ -585,7 +770,7 @@ function compareResults(expected, actual, ordered) {
 }
 
 export async function checkAnswer({ sql, solution, ordered = false, verify = null }) {
-  if (resetPromise) await resetPromise.catch(() => {});
+  await settle();
   const statements = splitStatements(sql ?? '');
   if (!statements.length) return { pass: false, reason: 'The editor is empty - write your query first.' };
   if (statements.length > 1) {

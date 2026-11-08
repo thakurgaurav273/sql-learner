@@ -22,7 +22,7 @@ export const sameSql = (a: string, b: string) => a.trimEnd() === b.trimEnd();
 // "Save query" dialog plus the Cmd/Ctrl+S shortcut. When the editor is linked to a
 // saved query, Cmd/Ctrl+S saves the changes straight away; otherwise it opens the dialog.
 export function SaveQueryDialog({ lesson }: { lesson: Lesson }) {
-  const { sql, saved, linkedSavedId, setLinkedSavedId, createSaved, updateSaved, saveDialogOpen, setSaveDialogOpen, toast, setSavedViewId, setNavTab } = usePlayground();
+  const { sql, saved, linkedSavedId, setLinkedSavedId, createSaved, updateSaved, saveDialogOpen, setSaveDialogOpen, toast, setSavedViewId, setNavTab, status } = usePlayground();
   const linked = saved.find((q) => q.id === linkedSavedId) ?? null;
   const [title, setTitle] = useState('');
   const [notes, setNotes] = useState('');
@@ -47,7 +47,13 @@ export function SaveQueryDialog({ lesson }: { lesson: Lesson }) {
     if (!sql.trim()) return;
     setBusy(mode);
     try {
-      const body = { title: title.trim() || 'Untitled query', notes, sql: sql.trimEnd() + '\n', lessonId: attach ? (mode === 'update' && linked?.lessonId) || lesson.id : null };
+      const body = {
+        title: title.trim() || 'Untitled query',
+        notes,
+        sql: sql.trimEnd() + '\n',
+        lessonId: attach ? (mode === 'update' && linked?.lessonId) || lesson.id : null,
+        database: status?.database ?? null, // the database it was written for
+      };
       const item = mode === 'update' && linked ? await updateSaved(linked.id, body) : await createSaved(body);
       setLinkedSavedId(item.id);
       setSaveDialogOpen(false);

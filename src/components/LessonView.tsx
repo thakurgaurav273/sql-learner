@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { ArrowLeft, ArrowRight, FlaskConical, Target } from 'lucide-react';
+import { ArrowLeft, ArrowRight, DatabaseZap, FlaskConical, Target } from 'lucide-react';
+import { useSwitch } from './Databases';
+import { Button } from '@/components/ui/button';
 import type { Lesson } from '../content/types';
 import { Markdown, CodeBlock } from './Markdown';
 import { JoinViz } from './JoinViz';
@@ -11,7 +13,11 @@ import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 export function LessonView({ lesson, index, total, prev, next, go }: { lesson: Lesson; index: number; total: number; prev?: Lesson; next?: Lesson; go: (id: string) => void }) {
-  const { solved } = usePlayground();
+  const { solved, status, databases } = usePlayground();
+  const sw = useSwitch();
+  const activeDb = databases?.databases.find((d) => d.name === databases.active);
+  const elsewhere = status && status.database !== status.practiceDatabase;
+  const sampleCopy = activeDb?.kind === 'user' && activeDb.origin === 'sample';
   const viewport = useRef<HTMLDivElement>(null);
   useEffect(() => {
     viewport.current?.scrollTo({ top: 0 });
@@ -39,6 +45,28 @@ export function LessonView({ lesson, index, total, prev, next, go }: { lesson: L
             </span>
           </div>
         )}
+        {elsewhere && (
+          <div
+            className={cn(
+              'mt-5 flex flex-wrap items-start gap-3 rounded-lg border px-3.5 py-3 text-[13px] leading-relaxed',
+              sampleCopy ? 'border-primary/25 bg-brand-soft/60' : 'border-warning/30 bg-warning-soft/70',
+            )}
+            data-testid="db-banner"
+          >
+            <DatabaseZap className={cn('mt-0.5 size-4 flex-none', sampleCopy ? 'text-primary' : 'text-warning')} />
+            <div className="min-w-[200px] flex-1">
+              The editor is using <code className="rounded bg-card px-1 py-0.5 font-mono text-[12px]">{status.database}</code>
+              {sampleCopy
+                ? ', your copy of the sample data: the examples run against your copy.'
+                : ". This lesson's examples use the practice data, so they won't find their tables here."}{' '}
+              Exercises are always checked against the practice data.
+            </div>
+            <Button size="xs" variant="outline" className="bg-card" onClick={() => sw.request(status.practiceDatabase)} data-action="switch-practice">
+              Switch to {status.practiceDatabase}
+            </Button>
+          </div>
+        )}
+        {sw.confirm}
         <div className="mt-6 h-px bg-border" />
 
         <div className="mt-2">

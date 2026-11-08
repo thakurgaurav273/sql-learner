@@ -93,7 +93,7 @@ Press **Ctrl+C** in the terminal. This stops the app and the database container.
 | **Query editor** (middle) | Write SQL here. Autocomplete knows your tables and columns. **Cmd+Enter** (Mac) or **Ctrl+Enter** (Windows/Linux) runs it. |
 | **Results** (under the editor) | One block per statement: the rows, each column's type, the row count and timing. `NULL` is shown in grey italics, so you can't mistake it for text. |
 | **Schema** (right) | Every table with its columns, types, keys and row counts. Click `→ customers.id` to jump to the referenced table, or **▶ SELECT \*** to peek at its data. It updates when you create or drop things. |
-| **Top bar** | Your progress, the database connection, and the **Reset DB** button. |
+| **Top bar** | Your progress, the **database switcher** (which database the editor uses; create new ones here), the **root terminal** button, light/dark, and **Reset DB**. |
 
 Drag the borders between panels to resize them. **«** and **»** hide or show the lesson list and the schema.
 
@@ -225,6 +225,36 @@ Wrote a query you want to keep, or finally understood something? Press **Cmd+S**
 - While a saved query is open in the editor, a chip above the editor shows its name. An amber dot means you changed it, and **Cmd/Ctrl+S** saves the change (with **Undo** in the confirmation). To start a fresh query instead, click **Clear** or load a lesson example.
 - Saves can be linked to the lesson you were on, and **Export** downloads all of them as one `.sql` file with your notes as comments.
 - They're stored in `data/saved-queries.json` in the project folder, **not** in the database, so **Reset DB never touches them**. That folder is in `.gitignore`, so your notes are never committed by accident.
+
+### Your own databases
+
+Once you're comfortable, start something of your own without losing your lessons and notes. Click the database name in the top bar:
+
+- **New database…** creates a separate database on the same local PostgreSQL, either **empty** (design your own schema with `CREATE TABLE`) or as **a copy of the sample data** to change freely without touching the lessons' database.
+- **Switch** between databases at any time. The editor, Session A/B, the schema panel and autocomplete all follow the active database. Exercises are always checked against the practice data, so they keep working wherever you are.
+- **Reset DB** resets the *active* database to how it started: the practice data, an empty database, or a fresh sample copy. **Manage databases…** resets or deletes any of them.
+- Saved queries remember which database they were written for, and offer to switch to it.
+
+The app remembers the active database across restarts (in `data/settings.json`).
+
+### Root terminal
+
+For everything else there's a **root terminal**: a psql-style console docked at the bottom of the screen. Open it with **Ctrl+\`** or the terminal button in the top bar. It runs as the PostgreSQL **superuser** `postgres`, so it can see and change *every* database: `CREATE DATABASE`, `DROP DATABASE`, roles, privileges, anything.
+
+```text
+learn=# \l                         list all databases
+learn=# CREATE DATABASE scratch;
+learn=# \c scratch                 connect to it
+scratch=# CREATE TABLE notes (id serial PRIMARY KEY, body text);
+scratch=# \dt                      list tables      (\d notes describes one)
+```
+
+- psql habits work: `\l`, `\c`, `\d`, `\dt`, `\dv`, `\di`, `\dn`, `\df`, `\du`, `\conninfo` and `\?` for help.
+- **Enter** runs a statement that ends with `;`; otherwise it continues on a new line, just like psql. **↑/↓** browse history, **Ctrl+C** cancels a running query, **Ctrl+L** clears the screen.
+- The prompt shows the transaction state like psql: `learn=*#` while a transaction is open.
+- Output is formatted the way psql prints it, with command tags (`INSERT 0 3`) and timings.
+- Databases you create here show up in the database switcher too.
+- **Protected:** the roles `postgres` and `learner` and the databases `postgres`, `learn_template` and `learn_check` keep the app running, so the terminal refuses to drop or alter them. Everything else is yours to break, and if the editor's database disappears, the app falls back to the practice database.
 
 ### Light and dark
 
@@ -394,6 +424,7 @@ The data is generated deterministically, so everyone gets exactly the same rows 
 | Stop a long-running query | Click **Stop** (queries are also stopped automatically after 30 seconds) |
 | Reuse an earlier query | **History ▾** above the editor |
 | Save the query with notes | **Cmd+S** (Mac) or **Ctrl+S**: opens the Save dialog, or saves changes to the query that's open |
+| Open or hide the root terminal | **Ctrl+\`** (in the terminal: Enter runs a statement ending in `;`, ↑/↓ history, Ctrl+C cancels, Ctrl+L clears) |
 | Jump to the error | **Show in editor** in the error box |
 | See a table's data | **▶ SELECT \*** in the schema panel |
 
@@ -448,7 +479,13 @@ Only for the first start, to download the npm packages and the PostgreSQL image.
 Yes. `SELECT`, joins, `GROUP BY`, subqueries, CTEs and window functions work almost the same in every modern database. A few things shown here are PostgreSQL extras (for example `RETURNING`, `ON CONFLICT`, `FILTER`, `LATERAL`, `date_trunc`), and other databases have their own versions of them.
 
 **Where is my data stored?**
-The practice database lives in a Docker volume named `sql-playground_pgdata`; it survives restarts, and `npm run db:destroy` deletes it. Your saved queries and notes are in `data/saved-queries.json` in the project folder: copy that file to back them up or move them to another computer. Exercise progress and editor contents are kept in your browser.
+All databases (the practice one and your own) live in a Docker volume named `sql-playground_pgdata`; it survives restarts, and `npm run db:destroy` deletes it. Your saved queries and notes are in `data/saved-queries.json` in the project folder, and the active database in `data/settings.json`: copy the `data` folder to back them up or move them to another computer. Exercise progress and editor contents are kept in your browser.
+
+**Is the root terminal dangerous?**
+It's a real superuser, but only for the local playground container, so the worst case is losing data inside it. The roles and databases the app needs are protected. If you break something anyway, `npm run db:destroy` followed by `npm run dev` gives you a completely fresh start (your saved notes in `data/` are kept).
+
+**Can I use my own databases from other tools?**
+Yes. Connect as `learner` / `learner` to any database you created from the database menu, for example `psql postgresql://learner:learner@localhost:54329/my_shop`.
 
 **How do I reset my exercise progress?**
 Clear the site data for `localhost:4400` in your browser (or open the app in a private window to start over).
@@ -510,7 +547,8 @@ flowchart LR
     T -. "cloned" .-> C
 ```
 
-- **One container, three databases.** `learn`, `learn_check` and `learn_template` all live in a single PostgreSQL 18 container on `localhost:54329`.
+- **One container, several databases.** `learn` (practice), `learn_check` (exercise checks), `learn_template` (the original data) and any databases you create all live in a single PostgreSQL 18 container on `localhost:54329`. The editor works in the *active* one.
+- **Your databases** are created by the server with the admin role but owned by `learner`, so you have full control inside them and nowhere else. The root terminal is the one place that runs as the superuser `postgres`.
 - **One port for everything.** A small Express server serves the React app (through Vite) and a JSON API.
 - **Your SQL runs as the user `learner`.** It owns the `learn` database, so it can create, change and drop anything in it. It is not a superuser, and it can't touch the template or other databases.
 - **Reset DB is instant** because PostgreSQL can copy a whole database from a template: the server drops `learn` and recreates it from `learn_template`.
@@ -573,12 +611,13 @@ sql-learner/
 │   ├── dev.mjs               `npm run dev`: Docker, database, server, browser
 │   ├── generate-seed.mjs     regenerates the sample data (deterministic)
 │   └── validate-content.mjs  runs every lesson snippet and exercise solution
-├── server/                   Express API: run queries, schema, Reset DB, exercise checks, saved queries
+├── server/                   Express API: queries, schema, Reset DB, exercise checks, databases,
+│                             root terminal (terminal.mjs), saved queries (saved.mjs)
 ├── src/
 │   ├── components/           editor, results, schema panel, join visualizer, exercises, notebook
 │   │   └── ui/               shadcn/ui components
 │   └── content/lessons/      all lessons and exercises
-├── data/                     your saved queries (created on first save, git-ignored)
+├── data/                     your saved queries + settings (created when needed, git-ignored)
 └── docs/screenshots/         the images in this README
 ```
 

@@ -69,6 +69,7 @@ export type Status = {
   ok: boolean;
   serverVersion: string;
   database: string;
+  practiceDatabase: string;
   host: string;
   port: number;
   user: string;
@@ -89,16 +90,37 @@ export type CheckResponse = {
   actual?: ResultTableData;
 };
 
+export type DatabaseInfo = {
+  name: string;
+  kind: 'practice' | 'user' | 'other';
+  origin: 'empty' | 'sample' | null;
+  createdAt: string | null;
+  owner: string;
+  sizeBytes: number;
+};
+export type DatabasesResponse = { active: string; practice: string; databases: DatabaseInfo[] };
+
+export type TerminalResponse = {
+  results: (StatementResult & { title?: string })[];
+  messages: string[];
+  notices: string[];
+  error: SqlError | null;
+  database: string;
+  user: string;
+  txStatus: TxStatus;
+};
+
 export type SavedQuery = {
   id: string;
   title: string;
   notes: string;
   sql: string;
   lessonId: string | null;
+  database?: string | null;
   createdAt: string;
   updatedAt: string;
 };
-export type SavedQueryInput = { title?: string; notes?: string; sql?: string; lessonId?: string | null };
+export type SavedQueryInput = { title?: string; notes?: string; sql?: string; lessonId?: string | null; database?: string | null };
 
 async function call<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
   let res: Response;
@@ -123,8 +145,20 @@ export const api = {
   schema: () => call<Schema>('GET', '/api/schema'),
   query: (sql: string, session: string) => call<QueryResponse>('POST', '/api/query', { sql, session }),
   cancel: (session: string) => call<{ cancelled: boolean }>('POST', '/api/cancel', { session }),
-  reset: () => call<{ ok: boolean; durationMs: number }>('POST', '/api/reset'),
+  reset: (database?: string) => call<{ ok: boolean; database: string; durationMs: number }>('POST', '/api/reset', { database }),
   check: (body: { sql: string; solution: string; ordered?: boolean; verify?: string }) => call<CheckResponse>('POST', '/api/check', body),
+  databases: {
+    list: () => call<DatabasesResponse>('GET', '/api/databases'),
+    create: (body: { name: string; origin: 'empty' | 'sample'; use?: boolean }) => call<DatabasesResponse>('POST', '/api/databases', body),
+    use: (name: string) => call<DatabasesResponse>('POST', '/api/databases/use', { name }),
+    remove: (name: string) => call<DatabasesResponse>('DELETE', `/api/databases/${encodeURIComponent(name)}`),
+  },
+  terminal: {
+    info: () =>
+      call<{ database: string; user: string; host: string; port: number; databases: { name: string; internal: boolean }[] }>('GET', '/api/terminal'),
+    run: (input: string) => call<TerminalResponse>('POST', '/api/terminal', { input }),
+    cancel: () => call<{ cancelled: boolean }>('POST', '/api/terminal/cancel'),
+  },
   saved: {
     list: () => call<{ queries: SavedQuery[]; file: string }>('GET', '/api/saved'),
     create: (body: SavedQueryInput & { sql: string }) => call<SavedQuery>('POST', '/api/saved', body),
