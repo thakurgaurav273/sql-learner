@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { EditorView } from '@codemirror/view';
 import { setDiagnostics } from '@codemirror/lint';
+import { toast as sonnerToast } from 'sonner';
 import { api, type QueryResponse, type Schema, type Status, type TxStatus } from './api';
 
 // Shared app state: editor contents, query execution, schema and progress.
@@ -38,8 +39,7 @@ type Ctx = {
   focusTable: string | null;
   setFocusTable: (t: string | null) => void;
   history: string[];
-  toast: (msg: string, kind?: 'ok' | 'err') => void;
-  toastMsg: { msg: string; kind: string } | null;
+  toast: (msg: string, kind?: 'ok' | 'err' | 'info') => void;
   afterReset: () => Promise<void>;
 };
 
@@ -89,9 +89,7 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
   const [solved, setSolved] = useState<Set<string>>(() => new Set(load<string[]>('sqlpg.solved', [])));
   const [focusTable, setFocusTable] = useState<string | null>(null);
   const [history, setHistory] = useState<string[]>(() => load('sqlpg.history', []));
-  const [toastMsg, setToastMsg] = useState<{ msg: string; kind: string } | null>(null);
   const editorView = useRef<EditorView | null>(null);
-  const toastTimer = useRef<number>(0);
   const sessionRef = useRef(session);
   sessionRef.current = session;
 
@@ -100,10 +98,10 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
     save('sqlpg.sql', s);
   }, []);
 
-  const toast = useCallback((msg: string, kind: 'ok' | 'err' = 'ok') => {
-    setToastMsg({ msg, kind });
-    window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToastMsg(null), 3200);
+  const toast = useCallback((msg: string, kind: 'ok' | 'err' | 'info' = 'ok') => {
+    if (kind === 'err') sonnerToast.error(msg);
+    else if (kind === 'info') sonnerToast(msg);
+    else sonnerToast.success(msg);
   }, []);
 
   const refreshSchema = useCallback(async () => {
@@ -254,10 +252,9 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
       setFocusTable,
       history,
       toast,
-      toastMsg,
       afterReset,
     }),
-    [sql, setSql, session, txStatus, runningSessions, runs, runEditor, cancel, loadSql, getEditorText, schema, schemaError, refreshSchema, status, statusError, refreshStatus, solved, markSolved, focusTable, history, toast, toastMsg, afterReset],
+    [sql, setSql, session, txStatus, runningSessions, runs, runEditor, cancel, loadSql, getEditorText, schema, schemaError, refreshSchema, status, statusError, refreshStatus, solved, markSolved, focusTable, history, toast, afterReset],
   );
   return <PlaygroundContext.Provider value={value}>{children}</PlaygroundContext.Provider>;
 }

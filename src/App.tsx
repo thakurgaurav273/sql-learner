@@ -1,11 +1,43 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useTheme, type Theme } from '@/lib/theme';
+import {
+  BookOpen,
+  Check,
+  CircleAlert,
+  Database,
+  Laptop,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightOpen,
+  RotateCcw,
+  Sun,
+  Trophy,
+} from 'lucide-react';
 import { PlaygroundProvider, usePlayground } from './state';
 import { lessons } from './content';
 import { LessonView } from './components/LessonView';
 import { Workspace } from './components/Workspace';
 import { SchemaPanel } from './components/SchemaPanel';
+import { PanelHeader, IconButton } from './components/PanelHeader';
 import { useDrag, useStoredNumber } from './components/layout';
 import { api } from './api';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 export function App() {
   return (
@@ -15,8 +47,9 @@ export function App() {
   );
 }
 
+const NAV_W = 256;
+
 function Shell() {
-  const { toastMsg } = usePlayground();
   const [lessonId, setLessonId] = useState<string>(() => {
     const fromHash = location.hash.slice(1);
     if (lessons.some((l) => l.id === fromHash)) return fromHash;
@@ -56,69 +89,60 @@ function Shell() {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  const [lessonW, setLessonW] = useStoredNumber('sqlpg.lessonW', Math.round(Math.max(420, window.innerWidth * 0.36)));
-  const [schemaW, setSchemaW] = useStoredNumber('sqlpg.schemaW', 290);
-  // keep at least ~380px for the editor whatever the stored widths are
-  const sideW = (navOpen ? 230 : 30) + (schemaOpen ? schemaW + 5 : 30) + 5;
-  const lessonWidth = Math.max(280, Math.min(lessonW, winW - sideW - 380));
-  const lessonDrag = useDrag((dx, start) => setLessonW(Math.max(300, Math.min(start + dx, window.innerWidth - sideW - 380))), lessonWidth);
-  const schemaDrag = useDrag((dx, start) => setSchemaW(Math.max(200, Math.min(start - dx, 560))), schemaW);
+  const [lessonW, setLessonW] = useStoredNumber('sqlpg.lessonW', Math.round(Math.max(440, window.innerWidth * 0.36)));
+  const [schemaW, setSchemaW] = useStoredNumber('sqlpg.schemaW', 300);
+  // keep at least ~400px for the editor whatever the stored widths are
+  const sideW = (navOpen ? NAV_W : 44) + (schemaOpen ? schemaW + 1 : 44) + 1;
+  const lessonWidth = Math.max(300, Math.min(lessonW, winW - sideW - 400));
+  const lessonDrag = useDrag((dx, start) => setLessonW(Math.max(320, Math.min(start + dx, window.innerWidth - sideW - 400))), lessonWidth);
+  const schemaDrag = useDrag((dx, start) => setSchemaW(Math.max(220, Math.min(start - dx, 560))), schemaW);
 
   return (
-    <div className="app">
+    <div className="flex h-full flex-col bg-background">
       <TopBar />
-      <div className="columns">
+      <div className="flex min-h-0 flex-1">
         {navOpen ? (
-          <div className="col nav" style={{ width: 230, flex: 'none', borderRight: '1px solid var(--border)' }}>
-            <div className="col-head">
-              Lessons
-              <span className="spacer" />
-              <button className="btn small ghost" onClick={() => setNavOpen(false)} title="Hide lesson list">
-                «
-              </button>
-            </div>
-            <div className="scroll">
+          <aside className="flex flex-none flex-col border-r bg-surface" style={{ width: NAV_W }} data-panel="nav">
+            <PanelHeader icon={<BookOpen />} title="Lessons" actions={<IconButton label="Hide lessons" onClick={() => setNavOpen(false)} icon={<PanelLeftClose />} />} />
+            <ScrollArea className="min-h-0 flex-1">
               <LessonNav current={lesson.id} go={go} />
-            </div>
-          </div>
+            </ScrollArea>
+          </aside>
         ) : (
-          <div className="collapsed-rail">
-            <button className="btn small ghost" onClick={() => setNavOpen(true)} title="Show lesson list">
-              »
-            </button>
-            <span className="rail-label" onClick={() => setNavOpen(true)}>
-              Lessons
-            </span>
-          </div>
+          <Rail side="left" label="Lessons" icon={<PanelLeftOpen />} onOpen={() => setNavOpen(true)} />
         )}
-        <div className="col" style={{ width: lessonWidth, flex: 'none' }}>
-          <div className="scroll">
-            <LessonView lesson={lesson} index={idx} total={lessons.length} prev={lessons[idx - 1]} next={lessons[idx + 1]} go={go} />
-          </div>
-        </div>
-        <div className={`gutter ${lessonDrag.dragging ? 'dragging' : ''}`} onMouseDown={lessonDrag.onMouseDown} />
-        <div className="col" style={{ flex: 1 }}>
+        <section className="flex min-w-0 flex-none flex-col bg-card" style={{ width: lessonWidth }} data-panel="lesson">
+          <LessonView lesson={lesson} index={idx} total={lessons.length} prev={lessons[idx - 1]} next={lessons[idx + 1]} go={go} />
+        </section>
+        <div className={cn('gutter', lessonDrag.dragging && 'dragging')} onMouseDown={lessonDrag.onMouseDown} />
+        <main className="flex min-w-0 flex-1 flex-col bg-card" data-panel="workspace">
           <Workspace />
-        </div>
+        </main>
         {schemaOpen ? (
           <>
-            <div className={`gutter ${schemaDrag.dragging ? 'dragging' : ''}`} onMouseDown={schemaDrag.onMouseDown} />
-            <div className="col" style={{ width: schemaW, flex: 'none' }}>
+            <div className={cn('gutter', schemaDrag.dragging && 'dragging')} onMouseDown={schemaDrag.onMouseDown} />
+            <aside className="flex flex-none flex-col bg-surface" style={{ width: schemaW }} data-panel="schema">
               <SchemaPanel onHide={() => setSchemaOpen(false)} />
-            </div>
+            </aside>
           </>
         ) : (
-          <div className="collapsed-rail">
-            <button className="btn small ghost" onClick={() => setSchemaOpen(true)} title="Show schema">
-              «
-            </button>
-            <span className="rail-label" onClick={() => setSchemaOpen(true)}>
-              Schema
-            </span>
-          </div>
+          <Rail side="right" label="Schema" icon={<PanelRightOpen />} onOpen={() => setSchemaOpen(true)} />
         )}
       </div>
-      {toastMsg && <div className={`toast ${toastMsg.kind === 'err' ? 'err' : ''}`}>{toastMsg.msg}</div>}
+    </div>
+  );
+}
+
+function Rail({ side, label, icon, onOpen }: { side: 'left' | 'right'; label: string; icon: ReactNode; onOpen: () => void }) {
+  return (
+    <div className={cn('flex w-11 flex-none flex-col items-center gap-3 bg-surface pt-2', side === 'left' ? 'border-r' : 'border-l')}>
+      <IconButton label={`Show ${label.toLowerCase()}`} onClick={onOpen} icon={icon} side={side === 'left' ? 'right' : 'left'} />
+      <button
+        onClick={onOpen}
+        className="text-[11px] font-medium tracking-[0.12em] text-muted-foreground uppercase transition-colors [writing-mode:vertical-rl] hover:text-foreground"
+      >
+        {label}
+      </button>
     </div>
   );
 }
@@ -135,24 +159,84 @@ function LessonNav({ current, go }: { current: string; go: (id: string) => void 
     return out;
   }, []);
   return (
-    <>
+    <nav className="px-2.5 pt-2 pb-6">
       {sections.map((s) => (
-        <div className="nav-section" key={s.name}>
-          <h4>{s.name}</h4>
-          {s.items.map(({ l, i }) => {
-            const done = l.exercises.filter((e) => solved.has(e.id)).length;
-            const all = l.exercises.length;
-            return (
-              <button key={l.id} className={`nav-item ${l.id === current ? 'active' : ''}`} onClick={() => go(l.id)}>
-                <span className="num">{i + 1}</span>
-                <span className="title">{l.title}</span>
-                {all > 0 && <span className={`badge ${done === all ? 'done' : ''}`}>{done === all ? '✓' : `${done}/${all}`}</span>}
-              </button>
-            );
-          })}
+        <div key={s.name} className="mt-3 first:mt-1">
+          <div className="px-2.5 pb-1.5 text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase">{s.name}</div>
+          <div className="flex flex-col gap-px">
+            {s.items.map(({ l, i }) => {
+              const done = l.exercises.filter((e) => solved.has(e.id)).length;
+              const all = l.exercises.length;
+              const complete = all > 0 && done === all;
+              const active = l.id === current;
+              return (
+                <button
+                  key={l.id}
+                  onClick={() => go(l.id)}
+                  aria-current={active ? 'page' : undefined}
+                  className={cn(
+                    'group flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-left text-[13px] leading-snug transition-colors',
+                    active ? 'bg-brand-soft font-medium text-primary' : 'text-foreground/80 hover:bg-accent hover:text-foreground',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'flex size-5 flex-none items-center justify-center rounded-full border text-[10px] font-semibold tabular-nums',
+                      complete
+                        ? 'border-success bg-success text-white dark:text-background'
+                        : active
+                          ? 'border-primary/40 text-primary'
+                          : 'border-border text-muted-foreground group-hover:border-foreground/20',
+                    )}
+                  >
+                    {complete ? <Check className="size-3" strokeWidth={3} /> : i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1">{l.title}</span>
+                  {all > 0 && !complete && (
+                    <span className={cn('text-[11px] tabular-nums', done > 0 ? 'text-primary' : 'text-muted-foreground/70')}>
+                      {done}/{all}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
       ))}
-    </>
+    </nav>
+  );
+}
+
+function ThemeToggle() {
+  const { theme, setTheme, resolvedTheme } = useTheme();
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" aria-label="Theme">
+              {resolvedTheme === 'dark' ? <Moon /> : <Sun />}
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Theme</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" className="w-40">
+        <DropdownMenuLabel>Appearance</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as Theme)}>
+          <DropdownMenuRadioItem value="light">
+            <Sun /> Light
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="dark">
+            <Moon /> Dark
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="system">
+            <Laptop /> System
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -174,7 +258,7 @@ function TopBar() {
     try {
       const r = await api.reset();
       await afterReset();
-      toast(`Database restored to its original seeded state (${(r.durationMs / 1000).toFixed(1)}s).`);
+      toast(`Database restored to its original state in ${(r.durationMs / 1000).toFixed(1)}s`);
     } catch (e) {
       toast(`Reset failed: ${(e as Error).message}`, 'err');
     } finally {
@@ -185,59 +269,107 @@ function TopBar() {
 
   return (
     <>
-      <div className="topbar">
-        <div className="brand">
-          <svg viewBox="0 0 32 32" aria-hidden>
-            <ellipse cx="16" cy="7" rx="11" ry="4" fill="#3b82f6" />
-            <path d="M5 7v18c0 2.2 4.9 4 11 4s11-1.8 11-4V7c0 2.2-4.9 4-11 4S5 9.2 5 7z" fill="#2563eb" />
-            <path d="M5 13c0 2.2 4.9 4 11 4s11-1.8 11-4M5 19c0 2.2 4.9 4 11 4s11-1.8 11-4" stroke="#93c5fd" strokeWidth="1.2" fill="none" />
-          </svg>
-          SQL Playground <small>learn SQL by running it</small>
-        </div>
-        <span className="spacer" />
-        <span className="chip progress-chip" title="Exercises solved (stored in this browser)">
-          <b>{solvedCount}</b>/{total} exercises solved
-        </span>
-        {status ? (
-          <span className="chip" title={`Connected as ${status.user} to database "${status.database}" at ${status.host}:${status.port}`}>
-            <span className="dot ok" /> PostgreSQL {status.serverVersion.split(' ')[0]} · {status.database}@localhost:{status.port}
-          </span>
-        ) : (
-          <span className="chip">
-            <span className={`dot ${statusError ? 'bad' : ''}`} /> {statusError ? 'Database unreachable' : 'Connecting…'}
-          </span>
-        )}
-        <button className="btn danger" onClick={() => setConfirming(true)} disabled={resetting} title="Restore the practice database to its original seeded state">
-          ⟲ Reset DB
-        </button>
-      </div>
-      {statusError && <div className="banner-err">{statusError} Retrying…</div>}
-      {confirming && (
-        <div className="overlay" onClick={() => !resetting && setConfirming(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Reset the practice database?</h3>
-            <p>
-              This drops the <code>learn</code> database and recreates it from the original seed: every table, row, index and constraint goes back to exactly how it
-              started. Anything you created, changed or deleted is lost, and open transactions in Session A/B are closed.
-            </p>
-            <p>Your editor contents and exercise progress are kept.</p>
-            <div className="actions">
-              <button className="btn" onClick={() => setConfirming(false)} disabled={resetting}>
-                Cancel
-              </button>
-              <button className="btn danger solid" onClick={reset} disabled={resetting} autoFocus>
-                {resetting ? (
-                  <>
-                    <span className="spinner" /> Resetting…
-                  </>
-                ) : (
-                  'Reset database'
-                )}
-              </button>
-            </div>
+      <header className="flex h-14 flex-none items-center gap-3 border-b bg-card/80 px-4 backdrop-blur" data-panel="topbar">
+        <div className="flex items-center gap-2.5">
+          <div className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-[oklch(0.5_0.22_290)] text-white shadow-sm ring-1 ring-black/5">
+            <Database className="size-4" strokeWidth={2.4} />
+          </div>
+          <div className="leading-tight">
+            <div className="text-[15px] font-semibold tracking-tight">SQL Playground</div>
+            <div className="text-[11.5px] text-muted-foreground">Learn SQL by running it</div>
           </div>
         </div>
+        <div className="flex-1" />
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="hidden items-center gap-2.5 rounded-full border bg-background px-3 py-1.5 sm:flex" data-testid="progress">
+              <Trophy className="size-3.5 text-pk" />
+              <span className="text-[12.5px] whitespace-nowrap text-muted-foreground">
+                <b className="font-semibold text-foreground tabular-nums">{solvedCount}</b> / {total} solved
+              </span>
+              <Progress value={(solvedCount / total) * 100} className="h-1.5 w-20" />
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>Exercises solved (saved in this browser)</TooltipContent>
+        </Tooltip>
+
+        {status ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="hidden items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-[12.5px] md:flex">
+                <span className="relative flex size-2">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-40" />
+                  <span className="relative inline-flex size-2 rounded-full bg-success" />
+                </span>
+                <span className="font-medium">PostgreSQL {status.serverVersion.split(' ')[0]}</span>
+                <span className="text-muted-foreground">
+                  {status.database}@localhost:{status.port}
+                </span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              Connected as <b>{status.user}</b> to database "{status.database}" at {status.host}:{status.port}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <div className="flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-[12.5px]">
+            <span className={cn('size-2 rounded-full', statusError ? 'bg-destructive' : 'animate-pulse bg-muted-foreground')} />
+            {statusError ? 'Database unreachable' : 'Connecting…'}
+          </div>
+        )}
+
+        <ThemeToggle />
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setConfirming(true)}
+          disabled={resetting}
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/15"
+        >
+          <RotateCcw /> Reset DB
+        </Button>
+      </header>
+
+      {statusError && (
+        <div className="flex items-center gap-2 border-b border-destructive/20 bg-danger-soft px-4 py-2 text-[13px] text-destructive">
+          <CircleAlert className="size-4" />
+          {statusError} Retrying…
+        </div>
       )}
+
+      <AlertDialog open={confirming} onOpenChange={(o) => !resetting && setConfirming(o)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset the practice database?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  This drops the <code className="rounded bg-muted px-1 py-0.5 text-[0.85em] text-foreground">learn</code> database and recreates it from the
+                  original seed. Every table, row, index and constraint goes back to exactly how it started; anything you created, changed or deleted is lost, and
+                  open transactions in Session A/B are closed.
+                </p>
+                <p>Your editor contents and exercise progress are kept.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resetting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                reset();
+              }}
+              disabled={resetting}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {resetting ? <span className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : <RotateCcw />}
+              {resetting ? 'Resetting…' : 'Reset database'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

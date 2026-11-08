@@ -4,35 +4,33 @@ import { sql as sqlLang, PostgreSQL } from '@codemirror/lang-sql';
 import { keymap, EditorView } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 import { lintGutter } from '@codemirror/lint';
+import { ChevronDown, ChevronRight, CircleCheck, CircleX, Eraser, History, Info, Loader2, Play, SquareTerminal, TriangleAlert } from 'lucide-react';
 import { usePlayground } from '../state';
 import { DataTable } from './DataTable';
 import { ErrorBox } from './ErrorBox';
+import { PanelHeader, IconButton } from './PanelHeader';
 import type { StatementResult } from '../api';
 import { useDrag, useStoredNumber } from './layout';
-
-function useDarkMode() {
-  const [dark, setDark] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false);
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const fn = () => setDark(mq.matches);
-    mq.addEventListener('change', fn);
-    return () => mq.removeEventListener('change', fn);
-  }, []);
-  return dark;
-}
+import { editorTheme } from '@/lib/editor-theme';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Kbd, KbdGroup } from '@/components/ui/kbd';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
-const MOD = isMac ? '⌘' : 'Ctrl';
+export const MOD = isMac ? '⌘' : 'Ctrl';
 
 export function Workspace() {
   const { sql, setSql, session, setSession, txStatus, running, runEditor, cancel, editorView, schema, history, loadSql } = usePlayground();
-  const dark = useDarkMode();
   const runRef = useRef(runEditor);
   runRef.current = runEditor;
   const [editorHeight, setEditorHeight] = useStoredNumber('sqlpg.editorH', 300);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [showHistory, setShowHistory] = useState(false);
-  const drag = useDrag((dy, start) => setEditorHeight(Math.max(90, Math.min(start + dy, (wrapRef.current?.clientHeight ?? 800) - 120))), editorHeight, 'y');
+  const drag = useDrag((dy, start) => setEditorHeight(Math.max(90, Math.min(start + dy, (wrapRef.current?.clientHeight ?? 800) - 140))), editorHeight, 'y');
 
   const extensions = useMemo(() => {
     const schemaMap: Record<string, string[]> = {};
@@ -50,80 +48,123 @@ export function Workspace() {
     ];
   }, [schema]);
 
+  const tx = txStatus[session];
+
   return (
-    <div className="workspace" ref={wrapRef}>
-      <div className="col-head">
-        Query editor
-        <span className="spacer" />
-        <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
-          <kbd>{MOD}</kbd>+<kbd>Enter</kbd> runs · select text to run part of it
-        </span>
-      </div>
-      <div className="toolbar">
+    <div className="flex min-h-0 flex-1 flex-col" ref={wrapRef}>
+      <PanelHeader
+        icon={<SquareTerminal />}
+        title="Query editor"
+        actions={
+          <span className="hidden items-center gap-1.5 text-[12px] text-muted-foreground lg:flex">
+            <KbdGroup>
+              <Kbd>{MOD}</Kbd>
+              <Kbd>↵</Kbd>
+            </KbdGroup>
+            to run · select text to run just that part
+          </span>
+        }
+      />
+      <div className="@container flex flex-none items-center gap-2 border-b px-3 py-2" data-testid="toolbar">
         {running ? (
-          <button className="btn danger" onClick={cancel} title="Cancel the running query">
-            <span className="spinner" /> Stop
-          </button>
+          <Button size="sm" variant="destructive" onClick={cancel} data-action="stop">
+            <Loader2 className="animate-spin" /> Stop
+          </Button>
         ) : (
-          <button className="btn primary" onClick={runEditor} title={`Run (${MOD}+Enter)`}>
-            &#9654; Run
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button size="sm" onClick={runEditor} data-action="run" className="gap-2 pr-2 shadow-sm">
+                <Play className="fill-current" /> Run
+                <span className="ml-0.5 hidden rounded bg-primary-foreground/15 px-1.5 py-px text-[10.5px] font-medium @[440px]:inline">{MOD} ↵</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Run the editor (or just the selected text)</TooltipContent>
+          </Tooltip>
         )}
-        <div className="seg" title="Two separate database connections. Use them to see how two transactions interact (Transactions lesson).">
-          {(['A', 'B'] as const).map((s) => (
-            <button key={s} className={session === s ? 'on' : ''} onClick={() => setSession(s)}>
-              Session {s}
-              {txStatus[s] && txStatus[s] !== 'idle' && <span className={`tx-badge ${txStatus[s]}`}>{txStatus[s] === 'in-transaction' ? 'TX' : 'TX ✕'}</span>}
-            </button>
-          ))}
-        </div>
-        <div style={{ position: 'relative' }}>
-          <button className="btn ghost" onClick={() => setShowHistory((s) => !s)} disabled={!history.length}>
-            History ▾
-          </button>
-          {showHistory && (
-            <div className="history-menu" onMouseLeave={() => setShowHistory(false)}>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              size="sm"
+              value={session}
+              onValueChange={(v) => v && setSession(v as 'A' | 'B')}
+              data-testid="sessions"
+            >
+              {(['A', 'B'] as const).map((s) => (
+                <ToggleGroupItem key={s} value={s} className="gap-1.5 px-2.5 text-[12.5px] data-[state=on]:bg-brand-soft data-[state=on]:text-primary @[400px]:px-3">
+                  <span className="hidden @[400px]:inline">Session</span> {s}
+                  {txStatus[s] && txStatus[s] !== 'idle' && (
+                    <span
+                      className={cn(
+                        'rounded px-1 text-[9.5px] font-bold tracking-wide',
+                        txStatus[s] === 'in-transaction' ? 'bg-warning-soft text-warning' : 'bg-danger-soft text-destructive',
+                      )}
+                    >
+                      {txStatus[s] === 'in-transaction' ? 'TX' : 'TX ✕'}
+                    </span>
+                  )}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-64">Two separate database connections. Use them to see how two transactions interact (Transactions lesson).</TooltipContent>
+        </Tooltip>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" disabled={!history.length} className="text-muted-foreground" aria-label="History">
+              <History /> <span className="hidden @[520px]:inline">History</span> <ChevronDown className="opacity-60" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-[min(460px,80vw)]">
+            <DropdownMenuLabel className="text-xs text-muted-foreground">Recent queries</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <div className="max-h-80 overflow-y-auto">
               {history.map((h, i) => (
-                <button
-                  key={i}
-                  title={h}
-                  onClick={() => {
-                    loadSql(h);
-                    setShowHistory(false);
-                  }}
-                >
+                <DropdownMenuItem key={i} onSelect={() => loadSql(h)} title={h} className="block truncate font-mono text-[12px]">
                   {h.replace(/\s+/g, ' ')}
-                </button>
+                </DropdownMenuItem>
               ))}
             </div>
-          )}
-        </div>
-        <span className="spacer" />
-        <button className="btn ghost" onClick={() => loadSql('')} title="Clear the editor">
-          Clear
-        </button>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <span className="flex-1" />
+        <IconButton label="Clear the editor" icon={<Eraser />} onClick={() => loadSql('')} />
       </div>
-      {txStatus[session] !== 'idle' && (
-        <div className={`tx-banner ${txStatus[session]}`}>
-          {txStatus[session] === 'in-transaction'
-            ? `Session ${session} has an open transaction. Its changes are invisible to other sessions until you run COMMIT (or undo them with ROLLBACK).`
-            : `Session ${session}: the transaction failed. Every statement will be rejected until you run ROLLBACK.`}
+
+      {tx !== 'idle' && (
+        <div
+          className={cn(
+            'flex flex-none items-start gap-2 border-b px-3.5 py-2 text-[12.5px]',
+            tx === 'in-transaction' ? 'bg-warning-soft text-warning' : 'bg-danger-soft text-destructive',
+          )}
+        >
+          <TriangleAlert className="mt-px size-3.5 flex-none" />
+          <span>
+            {tx === 'in-transaction'
+              ? `Session ${session} has an open transaction. Its changes are invisible to other sessions until you run COMMIT (or undo them with ROLLBACK).`
+              : `Session ${session}: the transaction failed. Every statement will be rejected until you run ROLLBACK.`}
+          </span>
         </div>
       )}
-      <div className="editor-wrap" style={{ height: editorHeight, flex: 'none' }}>
+
+      <div className="editor-wrap relative min-h-20 flex-none overflow-hidden bg-code" style={{ height: editorHeight }}>
         <CodeMirror
           value={sql}
           height="100%"
-          theme={dark ? 'dark' : 'light'}
+          theme={editorTheme}
           extensions={extensions}
           onChange={(v) => setSql(v)}
           onCreateEditor={(view) => {
             editorView.current = view;
           }}
-          basicSetup={{ foldGutter: false, highlightActiveLine: true }}
+          basicSetup={{ foldGutter: false, highlightActiveLine: true, highlightActiveLineGutter: true }}
         />
       </div>
-      <div className={`gutter h ${drag.dragging ? 'dragging' : ''}`} onMouseDown={drag.onMouseDown} />
+      <div className={cn('gutter h', drag.dragging && 'dragging')} onMouseDown={drag.onMouseDown} />
       <Results />
     </div>
   );
@@ -136,11 +177,31 @@ function Results() {
 
   if (!run) {
     return (
-      <div className="results">
-        <div className="results-head">Results</div>
-        <div className="empty">
-          <div className="big">⌘</div>
-          {running ? 'Running…' : `Run a query to see its results here (Session ${session}).`}
+      <div className="flex min-h-0 flex-1 flex-col" data-testid="results">
+        <ResultsHeader>
+          <span className="font-medium text-foreground">Results</span>
+        </ResultsHeader>
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+          {running ? (
+            <Loader2 className="size-6 animate-spin text-muted-foreground" />
+          ) : (
+            <>
+              <div className="flex size-11 items-center justify-center rounded-xl border bg-muted/60 text-muted-foreground">
+                <Play className="size-5" />
+              </div>
+              <div>
+                <div className="text-[13.5px] font-medium">Run a query to see results</div>
+                <div className="mt-1 flex items-center justify-center gap-1.5 text-[12.5px] text-muted-foreground">
+                  Press
+                  <KbdGroup>
+                    <Kbd>{MOD}</Kbd>
+                    <Kbd>↵</Kbd>
+                  </KbdGroup>
+                  or click Run · Session {session}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
@@ -150,45 +211,71 @@ function Results() {
   const lastWithRows = [...results].reverse().find((r) => r.fields.length > 0);
   const isOpen = (r: StatementResult) => open[r.index] ?? (results.length === 1 || r === lastWithRows || r.fields.length === 0);
   const total = results.reduce((s, r) => s + r.durationMs, 0);
+  const failed = !!response?.error || !!clientError;
 
   return (
-    <div className="results">
-      <div className="results-head">
+    <div className="flex min-h-0 flex-1 flex-col" data-testid="results">
+      <ResultsHeader session={run.ranSession}>
         {running ? (
           <>
-            <span className="spinner" /> Running…
+            <Loader2 className="size-3.5 animate-spin text-primary" /> <span>Running…</span>
           </>
         ) : clientError ? (
-          <span style={{ color: 'var(--err)' }}>Request failed</span>
+          <>
+            <CircleX className="size-3.5 text-destructive" /> <span className="text-destructive">Request failed</span>
+          </>
         ) : (
           <>
+            {failed ? <CircleX className="size-3.5 text-destructive" /> : <CircleCheck className="size-3.5 text-success" />}
             <span>
-              {results.length} statement{results.length === 1 ? '' : 's'} ran{response?.error ? ', then an error' : ''} · {total.toFixed(1)} ms
+              <span className="font-medium text-foreground">
+                {results.length} statement{results.length === 1 ? '' : 's'} ran
+              </span>
+              {response?.error ? ', then an error' : ''}
+              <span className="mx-1.5 text-border">•</span>
+              {total.toFixed(1)} ms
             </span>
           </>
         )}
-        <span className="spacer" />
-        <span>Session {run.ranSession}</span>
-      </div>
-      <div className="scroll">
-        {clientError && <div className="errorbox">{clientError}</div>}
+      </ResultsHeader>
+      <ScrollArea className="min-h-0 flex-1" horizontal>
+        {clientError && <div className="m-3 rounded-lg border border-destructive/30 bg-danger-soft p-3 text-[13px] text-destructive">{clientError}</div>}
         {response?.error && <ErrorBox error={response.error} text={run.ranText} offset={run.ranOffset} />}
         {results.map((r) =>
           results.length === 1 && r.fields.length > 0 ? (
             <ResultBody key={r.index} r={r} />
           ) : (
-            <div className="stmt" key={r.index}>
-              <button className="stmt-head" onClick={() => setOpen((o) => ({ ...o, [r.index]: !isOpen(r) }))}>
-                <span>{isOpen(r) ? '▾' : '▸'}</span>
-                <span className="cmd">{r.command}</span>
-                <span className="sql-preview">{r.sql.replace(/\s+/g, ' ')}</span>
-                <span className="meta">{summary(r)}</span>
+            <div className="border-b" key={r.index} data-testid="statement">
+              <button
+                className="flex w-full items-center gap-2 bg-muted/40 px-3 py-1.5 text-left text-[12px] transition-colors hover:bg-muted"
+                onClick={() => setOpen((o) => ({ ...o, [r.index]: !isOpen(r) }))}
+              >
+                <ChevronRight className={cn('size-3.5 flex-none text-muted-foreground transition-transform', isOpen(r) && 'rotate-90')} />
+                <Badge variant="secondary" className="rounded px-1.5 py-0 font-mono text-[10.5px] font-semibold">
+                  {r.command}
+                </Badge>
+                <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">{r.sql.replace(/\s+/g, ' ')}</span>
+                <span className="whitespace-nowrap text-muted-foreground">{summary(r)}</span>
               </button>
               {isOpen(r) && r.fields.length > 0 && <ResultBody r={r} />}
             </div>
           ),
         )}
-      </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
+function ResultsHeader({ children, session }: { children: React.ReactNode; session?: string }) {
+  return (
+    <div className="flex h-10 flex-none items-center gap-2 border-b px-3.5 text-[12.5px] text-muted-foreground">
+      {children}
+      <span className="flex-1" />
+      {session && (
+        <Badge variant="outline" className="font-normal text-muted-foreground">
+          Session {session}
+        </Badge>
+      )}
     </div>
   );
 }
@@ -204,15 +291,25 @@ function ResultBody({ r }: { r: StatementResult }) {
   const isPlan = r.fields.length === 1 && r.fields[0].name === 'QUERY PLAN';
   return (
     <div>
-      {r.truncated && <div className="notice">Showing the first {r.rows.length} rows only - the query returned more. Add a LIMIT or a WHERE clause.</div>}
-      {r.fields.length > 0 && r.rows.length === 0 && <div className="notice" style={{ color: 'var(--text-2)', background: 'var(--panel-2)' }}>The query returned 0 rows.</div>}
+      {r.truncated && (
+        <div className="flex items-center gap-2 bg-warning-soft px-3.5 py-1.5 text-[12px] text-warning">
+          <TriangleAlert className="size-3.5" /> Showing the first {r.rows.length} rows only: the query returned more. Add a LIMIT or a WHERE clause.
+        </div>
+      )}
+      {r.fields.length > 0 && r.rows.length === 0 && (
+        <div className="flex items-center gap-2 bg-muted/50 px-3.5 py-1.5 text-[12px] text-muted-foreground">
+          <Info className="size-3.5" /> The query returned 0 rows.
+        </div>
+      )}
       {isPlan ? (
         <pre className="plan" dangerouslySetInnerHTML={{ __html: highlightPlan(r.rows.map((x) => x[0] ?? '').join('\n')) }} />
       ) : (
         r.rows.length > 0 && <DataTable fields={r.fields} rows={r.rows} />
       )}
-      <div className="results-head" style={{ borderTop: '1px solid var(--border)', borderBottom: 0 }}>
-        {r.command} · {summary(r)}
+      <div className="flex h-8 items-center gap-2 border-t px-3.5 text-[11.5px] text-muted-foreground">
+        <span className="font-mono font-medium text-foreground/70">{r.command}</span>
+        <span>·</span>
+        <span>{summary(r)}</span>
       </div>
     </div>
   );

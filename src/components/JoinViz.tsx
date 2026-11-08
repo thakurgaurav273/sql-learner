@@ -2,6 +2,12 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JoinType, JoinVizConfig, VizTable, VizValue } from '../content/types';
 import { highlightSql } from '../lib/highlight';
 import { usePlayground } from '../state';
+import { ArrowRight, ChevronLeft, ChevronRight, Eye, Maximize2, Play, RotateCcw, StepForward } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 
 // Interactive picture of how a join combines rows: left table, right table
 // (with lines between matching rows) and the result, side by side. You can
@@ -191,13 +197,13 @@ export function JoinViz({ config }: { config: JoinVizConfig }) {
   return (
     <>
       <JoinVizInner {...props} />
-      {expanded && (
-        <div className="overlay" onClick={() => setExpanded(false)}>
-          <div className="modal wide" onClick={(e) => e.stopPropagation()}>
-            <JoinVizInner {...props} inModal />
-          </div>
-        </div>
-      )}
+      <Dialog open={expanded} onOpenChange={setExpanded}>
+        <DialogContent className="max-h-[92vh] w-[min(1280px,95vw)] max-w-none overflow-auto p-0 sm:max-w-none" data-testid="join-viz-dialog">
+          <DialogTitle className="sr-only">Join visualizer</DialogTitle>
+          <DialogDescription className="sr-only">A bigger view of the join visualizer.</DialogDescription>
+          <JoinVizInner {...props} inModal />
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -298,31 +304,32 @@ function JoinVizInner({
     [base, opts.hot && 'hot', opts.dim && 'dim', opts.probe && 'probe', opts.unmatched && 'unmatched'].filter(Boolean).join(' ');
 
   return (
-    <div className="jv">
-      <div className="jv-top">
-        <span className="label">Join type</span>
-        <div className="seg">
+    <div className={cn('jv overflow-hidden bg-card', inModal ? 'rounded-lg' : 'my-5 rounded-xl border shadow-[var(--shadow-card)]')} data-testid="join-viz">
+      <div className={cn('flex flex-wrap items-center gap-2 border-b px-3.5 py-2.5', inModal && 'pr-12')}>
+        <span className="mr-1 text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase">Join type</span>
+        <ToggleGroup type="single" variant="outline" size="sm" value={type} onValueChange={(v) => v && changeType(v as JoinType)}>
           {config.types.map((t) => (
-            <button key={t} className={t === type ? 'on' : ''} onClick={() => changeType(t)}>
+            <ToggleGroupItem key={t} value={t} className="px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-primary">
               {TYPE_LABEL[t]}
-            </button>
+            </ToggleGroupItem>
           ))}
-        </div>
-        <span className="spacer" />
-        <button className="btn small" onClick={() => loadSql(runnableSql(config, type), { run: true })} title="Load an equivalent query (with these mini tables as CTEs) into the editor and run it on Postgres">
-          &#9654; Run in Postgres
-        </button>
-        {!inModal ? (
-          <button className="btn small ghost" onClick={() => setExpanded(true)} title="Open bigger">
-            &#x2922; Expand
-          </button>
-        ) : (
-          <button className="btn small" onClick={() => setExpanded(false)}>
-            Close
-          </button>
+        </ToggleGroup>
+        <span className="flex-1" />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="xs" onClick={() => loadSql(runnableSql(config, type), { run: true })}>
+              <Play className="fill-current" /> Run in Postgres
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-64">Load an equivalent query (with these mini tables as CTEs) into the editor and run it on Postgres</TooltipContent>
+        </Tooltip>
+        {!inModal && (
+          <Button variant="ghost" size="xs" onClick={() => setExpanded(true)} className="text-muted-foreground" data-action="expand">
+            <Maximize2 /> Expand
+          </Button>
         )}
       </div>
-      <pre className="jv-sql">
+      <pre className="m-0 overflow-x-auto border-b bg-code px-4 py-2.5 text-[12.5px] leading-relaxed">
         <code dangerouslySetInnerHTML={{ __html: highlightSql(sqlText) }} />
       </pre>
       <div className="jv-stage">
@@ -422,7 +429,9 @@ function JoinVizInner({
             </tbody>
           </table>
         </div>
-        <div className="jv-arrow">→</div>
+        <div className="jv-arrow">
+          <ArrowRight className="size-5" />
+        </div>
         <div>
           <table className="jv-table">
             <caption>
@@ -487,25 +496,25 @@ function JoinVizInner({
           {visibleCount === 0 && <div className="jv-empty-result">(no rows yet)</div>}
         </div>
       </div>
-      <div className="jv-explain">
+      <div className="jv-explain px-4 pb-3.5 text-[13px] leading-relaxed text-muted-foreground [&_b]:text-foreground">
         {parts.map((p, i) => (
           <p key={i} dangerouslySetInnerHTML={{ __html: p }} />
         ))}
       </div>
-      <div className="jv-step">
-        <button className="btn small" onClick={() => setStep(0)} disabled={step === 0}>
-          {step === null ? '▶ Step through' : '⏮ Restart'}
-        </button>
-        <button className="btn small" disabled={step === null || step === 0} onClick={() => setStep((s) => (s === null ? 0 : Math.max(0, s - 1)))}>
-          ◀ Prev
-        </button>
-        <button className="btn small" disabled={step !== null && step >= steps.length - 1} onClick={() => setStep((s) => (s === null ? 0 : Math.min(steps.length - 1, s + 1)))}>
-          Next ▶
-        </button>
-        <button className="btn small ghost" disabled={step === null} onClick={() => setStep(null)}>
-          Show all
-        </button>
-        <span className="msg" dangerouslySetInnerHTML={{ __html: cur ? `<b>Step ${step! + 1}/${steps.length}:</b> ${cur.msg}` : 'Hover over any row to see where it comes from, or step through the join one row at a time.' }} />
+      <div className="flex flex-wrap items-center gap-1.5 border-t bg-muted/40 px-3.5 py-2.5">
+        <Button variant="outline" size="xs" className="bg-card" onClick={() => setStep(0)} disabled={step === 0}>
+          {step === null ? <StepForward /> : <RotateCcw />} {step === null ? 'Step through' : 'Restart'}
+        </Button>
+        <Button variant="outline" size="icon-xs" className="bg-card" aria-label="Previous step" disabled={step === null || step === 0} onClick={() => setStep((s) => (s === null ? 0 : Math.max(0, s - 1)))}>
+          <ChevronLeft />
+        </Button>
+        <Button variant="outline" size="icon-xs" className="bg-card" aria-label="Next step" disabled={step !== null && step >= steps.length - 1} onClick={() => setStep((s) => (s === null ? 0 : Math.min(steps.length - 1, s + 1)))}>
+          <ChevronRight />
+        </Button>
+        <Button variant="ghost" size="xs" className="text-muted-foreground" disabled={step === null} onClick={() => setStep(null)}>
+          <Eye /> Show all
+        </Button>
+        <span className="ml-1.5 min-w-[200px] flex-1 text-[12.5px] text-muted-foreground [&_b]:font-semibold [&_b]:text-foreground" dangerouslySetInnerHTML={{ __html: cur ? `<b>Step ${step! + 1}/${steps.length}:</b> ${cur.msg}` : 'Hover over any row to see where it comes from, or step through the join one row at a time.' }} />
       </div>
     </div>
   );

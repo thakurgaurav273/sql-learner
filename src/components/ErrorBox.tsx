@@ -1,5 +1,8 @@
+import { Crosshair, Lightbulb, OctagonX } from 'lucide-react';
 import type { SqlError } from '../api';
 import { usePlayground } from '../state';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 
 // Shows a Postgres error with everything useful: message, SQLSTATE, detail/hint,
 // the offending line with a caret under the error position, and a learning tip.
@@ -30,73 +33,72 @@ export function ErrorBox({ error, text, offset = 0 }: { error: SqlError; text?: 
     v.focus();
   };
   const multi = (error.statementCount ?? 1) > 1;
+  const rows: [string, React.ReactNode][] = [];
+  if (multi)
+    rows.push([
+      'Statement',
+      `${error.statementIndex! + 1} of ${error.statementCount} failed${error.statementIndex! > 0 ? '; the statements before it ran successfully (see below)' : ''}; the rest were not run.`,
+    ]);
+  if (error.detail) rows.push(['Detail', error.detail]);
+  if (error.hint) rows.push(['Hint', error.hint]);
+  if (error.constraint)
+    rows.push([
+      'Constraint',
+      <>
+        <code className="rounded bg-card px-1 py-0.5 text-[12px]">{error.constraint}</code>
+        {error.table ? ` on table ${error.table}` : ''}
+      </>,
+    ]);
+  if (error.where) rows.push(['Where', error.where]);
+
   return (
-    <div className="errorbox" role="alert">
-      <div className="title">
-        <span className="msg">ERROR: {error.message}</span>
-        {error.code && (
-          <span className="code">
-            SQLSTATE {error.code}
-            {error.codeName ? ` (${error.codeName})` : ''}
-          </span>
+    <div className="m-3 rounded-xl border border-destructive/25 bg-danger-soft/70 p-4 text-[13px]" role="alert" data-testid="error">
+      <div className="flex items-start gap-2.5">
+        <OctagonX className="mt-0.5 size-4 flex-none text-destructive" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[14px] leading-snug font-semibold text-destructive">{error.message}</div>
+          {error.code && (
+            <Badge variant="outline" className="mt-1.5 border-destructive/25 bg-card/60 font-mono text-[11px] font-normal text-muted-foreground">
+              SQLSTATE {error.code}
+              {error.codeName ? ` · ${error.codeName}` : ''}
+            </Badge>
+          )}
+        </div>
+      </div>
+
+      {rows.length > 0 && (
+        <dl className="mt-3 ml-6.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+          {rows.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="text-[12px] font-medium text-muted-foreground">{k}</dt>
+              <dd className="m-0">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      <div className="mt-3 ml-6.5 space-y-2.5">
+        {snippet && (
+          <pre className="err-snippet">
+            {`line ${snippet.line}: ${snippet.src}\n`}
+            <span className="caret">{' '.repeat(`line ${snippet.line}: `.length + snippet.col - 1)}^</span>
+          </pre>
+        )}
+        {error.tip && (
+          <div className="flex gap-2.5 rounded-lg border bg-card p-3 leading-relaxed">
+            <Lightbulb className="mt-0.5 size-4 flex-none text-warning" />
+            <div>
+              <span className="font-semibold">Tip: </span>
+              {error.tip}
+            </div>
+          </div>
+        )}
+        {snippet && (
+          <Button variant="outline" size="xs" onClick={jump} className="bg-card">
+            <Crosshair /> Show in editor
+          </Button>
         )}
       </div>
-      <dl>
-        {multi && (
-          <>
-            <dt>Statement</dt>
-            <dd>
-              {error.statementIndex! + 1} of {error.statementCount} failed
-              {error.statementIndex! > 0 ? ' - the statements before it ran successfully (see below)' : ''}; the rest were not run.
-            </dd>
-          </>
-        )}
-        {error.detail && (
-          <>
-            <dt>Detail</dt>
-            <dd>{error.detail}</dd>
-          </>
-        )}
-        {error.hint && (
-          <>
-            <dt>Hint</dt>
-            <dd>{error.hint}</dd>
-          </>
-        )}
-        {error.constraint && (
-          <>
-            <dt>Constraint</dt>
-            <dd>
-              <code>{error.constraint}</code>
-              {error.table ? ` on table ${error.table}` : ''}
-            </dd>
-          </>
-        )}
-        {error.where && (
-          <>
-            <dt>Where</dt>
-            <dd>{error.where}</dd>
-          </>
-        )}
-      </dl>
-      {snippet && (
-        <pre className="snippet">
-          {`line ${snippet.line}: ${snippet.src}\n`}
-          <span className="caret">{' '.repeat(`line ${snippet.line}: `.length + snippet.col - 1)}^</span>
-        </pre>
-      )}
-      {error.tip && (
-        <div className="tip">
-          <b>Tip:</b> {error.tip}
-        </div>
-      )}
-      {snippet && (
-        <div className="actions">
-          <button className="btn small" onClick={jump}>
-            Show in editor
-          </button>
-        </div>
-      )}
     </div>
   );
 }

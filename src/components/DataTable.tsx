@@ -10,7 +10,7 @@ export function DataTable({ fields, rows, rowClass, startIndex = 1 }: { fields: 
         <tr>
           <th className="rn">#</th>
           {fields.map((f, i) => (
-            <th key={i} title={`${f.name} : ${f.type}`}>
+            <th key={i} title={`${f.name} : ${f.type}`} className={numeric[i] ? 'text-right' : undefined}>
               {f.name || '?column?'}
               <span className="ty">{f.type}</span>
             </th>
@@ -23,8 +23,8 @@ export function DataTable({ fields, rows, rowClass, startIndex = 1 }: { fields: 
             <td className="rn">{ri + startIndex}</td>
             {row.map((v, ci) =>
               v === null ? (
-                <td key={ci} className="null">
-                  NULL
+                <td key={ci} className={numeric[ci] ? 'num' : undefined}>
+                  <span className="null">NULL</span>
                 </td>
               ) : (
                 <td key={ci} className={numeric[ci] ? 'num' : ''} title={v.length > 40 ? v : undefined}>
