@@ -1,0 +1,26 @@
+# Local practice database for SQL Playground.
+# Started automatically by `npm run dev` - you don't need to run this by hand.
+name: sql-playground
+
+services:
+  db:
+    image: postgres:18
+    container_name: sql-playground-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: playground
+      POSTGRES_DB: postgres
+    ports:
+      # Bound to localhost only, on an uncommon port so it never clashes with other Postgres instances.
+      - "127.0.0.1:${PG_PORT:-54329}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+volumes:
+  pgdata:
