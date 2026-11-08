@@ -69,7 +69,7 @@ function copyText(text: string, toast: (m: string, k?: 'ok' | 'err' | 'info') =>
   );
 }
 
-export function CodeBlock({ sql, label = 'SQL', className, bare }: { sql: string; label?: string; className?: string; bare?: boolean }) {
+export function CodeBlock({ sql, label = 'SQL', className, bare, savedId }: { sql: string; label?: string; className?: string; bare?: boolean; savedId?: string }) {
   const { loadSql, toast } = usePlayground();
   return (
     <div className={cn('codeblock', bare && 'm-0 rounded-none border-0', className)}>
@@ -84,10 +84,10 @@ export function CodeBlock({ sql, label = 'SQL', className, bare }: { sql: string
             </TooltipTrigger>
             <TooltipContent>Copy</TooltipContent>
           </Tooltip>
-          <Button variant="ghost" size="xs" className="text-muted-foreground hover:text-foreground" onClick={() => loadSql(sql)}>
+          <Button variant="ghost" size="xs" className="text-muted-foreground hover:text-foreground" onClick={() => loadSql(sql, { savedId })}>
             <PencilLine /> Load into editor
           </Button>
-          <Button size="xs" className="shadow-sm" onClick={() => loadSql(sql, { run: true })}>
+          <Button size="xs" className="shadow-sm" onClick={() => loadSql(sql, { run: true, savedId })}>
             <Play className="fill-current" /> Run
           </Button>
         </span>

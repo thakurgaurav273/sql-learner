@@ -8,7 +8,7 @@ export function PanelHeader({ icon, title, extra, actions, className }: { icon?:
   return (
     <div className={cn('flex h-11 flex-none items-center gap-2 border-b px-3', className)}>
       {icon && <span className="text-muted-foreground [&>svg]:size-4">{icon}</span>}
-      <span className="text-[13px] font-semibold tracking-tight">{title}</span>
+      <span className="text-[13px] font-semibold tracking-tight whitespace-nowrap">{title}</span>
       {extra}
       <span className="flex-1" />
       {actions && <div className="flex items-center gap-0.5">{actions}</div>}

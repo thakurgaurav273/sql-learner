@@ -3,3 +3,5 @@ dist/
 .DS_Store
 *.log
 .env
+# your saved queries and notes (personal, not part of the project)
+data/

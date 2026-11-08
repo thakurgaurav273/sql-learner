@@ -89,7 +89,18 @@ export type CheckResponse = {
   actual?: ResultTableData;
 };
 
-async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+export type SavedQuery = {
+  id: string;
+  title: string;
+  notes: string;
+  sql: string;
+  lessonId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type SavedQueryInput = { title?: string; notes?: string; sql?: string; lessonId?: string | null };
+
+async function call<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -100,8 +111,10 @@ async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Pr
   } catch {
     throw new Error('Cannot reach the playground server. Is `npm run dev` still running?');
   }
-  const data = await res.json().catch(() => ({}));
+  const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(data?.error?.message ?? `HTTP ${res.status}`);
+  // e.g. an older server without this endpoint answers with the HTML page
+  if (data === null) throw new Error('The server sent an unexpected response. Restart `npm run dev` and try again.');
   return data as T;
 }
 
@@ -112,4 +125,10 @@ export const api = {
   cancel: (session: string) => call<{ cancelled: boolean }>('POST', '/api/cancel', { session }),
   reset: () => call<{ ok: boolean; durationMs: number }>('POST', '/api/reset'),
   check: (body: { sql: string; solution: string; ordered?: boolean; verify?: string }) => call<CheckResponse>('POST', '/api/check', body),
+  saved: {
+    list: () => call<{ queries: SavedQuery[]; file: string }>('GET', '/api/saved'),
+    create: (body: SavedQueryInput & { sql: string }) => call<SavedQuery>('POST', '/api/saved', body),
+    update: (id: string, body: SavedQueryInput) => call<SavedQuery>('PUT', `/api/saved/${encodeURIComponent(id)}`, body),
+    remove: (id: string) => call<{ ok: true }>('DELETE', `/api/saved/${encodeURIComponent(id)}`),
+  },
 };

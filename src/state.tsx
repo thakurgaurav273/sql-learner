@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { EditorView } from '@codemirror/view';
 import { setDiagnostics } from '@codemirror/lint';
 import { toast as sonnerToast } from 'sonner';
-import { api, type QueryResponse, type Schema, type Status, type TxStatus } from './api';
+import { api, type QueryResponse, type SavedQuery, type SavedQueryInput, type Schema, type Status, type TxStatus } from './api';
 
 // Shared app state: editor contents, query execution, schema and progress.
 
@@ -25,7 +25,8 @@ type Ctx = {
   run: RunState | null;
   runEditor: () => void;
   cancel: () => void;
-  loadSql: (sql: string, opts?: { run?: boolean; session?: 'A' | 'B' }) => void;
+  /** Replace the editor contents. `savedId` links the editor to that saved query. */
+  loadSql: (sql: string, opts?: { run?: boolean; session?: 'A' | 'B'; savedId?: string }) => void;
   editorView: React.MutableRefObject<EditorView | null>;
   getEditorText: () => { text: string; offset: number; isSelection: boolean };
   schema: Schema | null;
@@ -41,6 +42,22 @@ type Ctx = {
   history: string[];
   toast: (msg: string, kind?: 'ok' | 'err' | 'info') => void;
   afterReset: () => Promise<void>;
+  // saved queries ("my notebook")
+  saved: SavedQuery[];
+  savedLoaded: boolean;
+  savedError: string | null;
+  refreshSaved: () => Promise<void>;
+  createSaved: (input: SavedQueryInput & { sql: string }) => Promise<SavedQuery>;
+  updateSaved: (id: string, input: SavedQueryInput) => Promise<SavedQuery>;
+  deleteSaved: (id: string) => Promise<void>;
+  linkedSavedId: string | null; // the saved query currently open in the editor
+  setLinkedSavedId: (id: string | null) => void;
+  savedViewId: string | null; // the saved query shown in the middle panel
+  setSavedViewId: (id: string | null) => void;
+  navTab: 'lessons' | 'saved';
+  setNavTab: (t: 'lessons' | 'saved') => void;
+  saveDialogOpen: boolean;
+  setSaveDialogOpen: (open: boolean) => void;
 };
 
 const PlaygroundContext = createContext<Ctx | null>(null);
@@ -89,6 +106,13 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
   const [solved, setSolved] = useState<Set<string>>(() => new Set(load<string[]>('sqlpg.solved', [])));
   const [focusTable, setFocusTable] = useState<string | null>(null);
   const [history, setHistory] = useState<string[]>(() => load('sqlpg.history', []));
+  const [saved, setSaved] = useState<SavedQuery[]>([]);
+  const [savedLoaded, setSavedLoaded] = useState(false);
+  const [savedError, setSavedError] = useState<string | null>(null);
+  const [linkedSavedId, setLinkedSavedIdState] = useState<string | null>(() => load<string | null>('sqlpg.linkedSaved', null));
+  const [savedViewId, setSavedViewId] = useState<string | null>(() => (location.hash.startsWith('#saved/') ? decodeURIComponent(location.hash.slice(7)) : null));
+  const [navTab, setNavTabState] = useState<'lessons' | 'saved'>(() => (location.hash.startsWith('#saved/') ? 'saved' : load('sqlpg.navTab', 'lessons')));
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const editorView = useRef<EditorView | null>(null);
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -96,6 +120,15 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
   const setSql = useCallback((s: string) => {
     setSqlState(s);
     save('sqlpg.sql', s);
+  }, []);
+
+  const setLinkedSavedId = useCallback((id: string | null) => {
+    setLinkedSavedIdState(id);
+    save('sqlpg.linkedSaved', id);
+  }, []);
+  const setNavTab = useCallback((t: 'lessons' | 'saved') => {
+    setNavTabState(t);
+    save('sqlpg.navTab', t);
   }, []);
 
   const toast = useCallback((msg: string, kind: 'ok' | 'err' | 'info' = 'ok') => {
@@ -124,10 +157,45 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const refreshSaved = useCallback(async () => {
+    try {
+      const { queries } = await api.saved.list();
+      setSaved(queries);
+      setSavedError(null);
+    } catch (e) {
+      setSavedError((e as Error).message);
+    } finally {
+      setSavedLoaded(true);
+    }
+  }, []);
+
+  const createSaved = useCallback(async (input: SavedQueryInput & { sql: string }) => {
+    const item = await api.saved.create(input);
+    setSaved((s) => [item, ...s]);
+    return item;
+  }, []);
+
+  const updateSaved = useCallback(async (id: string, input: SavedQueryInput) => {
+    const item = await api.saved.update(id, input);
+    setSaved((s) => [item, ...s.filter((q) => q.id !== id)]);
+    return item;
+  }, []);
+
+  const deleteSaved = useCallback(
+    async (id: string) => {
+      await api.saved.remove(id);
+      setSaved((s) => s.filter((q) => q.id !== id));
+      setSavedViewId((v) => (v === id ? null : v));
+      if (linkedSavedId === id) setLinkedSavedId(null);
+    },
+    [linkedSavedId, setLinkedSavedId],
+  );
+
   useEffect(() => {
     refreshStatus();
     refreshSchema();
-  }, [refreshSchema, refreshStatus]);
+    refreshSaved();
+  }, [refreshSchema, refreshStatus, refreshSaved]);
 
   const clearDiagnostics = () => {
     const v = editorView.current;
@@ -188,7 +256,8 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
   }, [execute, getEditorText]);
 
   const loadSql = useCallback(
-    (text: string, opts?: { run?: boolean; session?: 'A' | 'B' }) => {
+    (text: string, opts?: { run?: boolean; session?: 'A' | 'B'; savedId?: string }) => {
+      setLinkedSavedId(opts?.savedId ?? null);
       if (opts?.session) {
         sessionRef.current = opts.session;
         setSession(opts.session);
@@ -202,7 +271,7 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
       }
       if (opts?.run) execute(t, 0);
     },
-    [execute, setSql],
+    [execute, setSql, setLinkedSavedId],
   );
 
   const cancel = useCallback(() => {
@@ -253,8 +322,23 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
       history,
       toast,
       afterReset,
+      saved,
+      savedLoaded,
+      savedError,
+      refreshSaved,
+      createSaved,
+      updateSaved,
+      deleteSaved,
+      linkedSavedId,
+      setLinkedSavedId,
+      savedViewId,
+      setSavedViewId,
+      navTab,
+      setNavTab,
+      saveDialogOpen,
+      setSaveDialogOpen,
     }),
-    [sql, setSql, session, txStatus, runningSessions, runs, runEditor, cancel, loadSql, getEditorText, schema, schemaError, refreshSchema, status, statusError, refreshStatus, solved, markSolved, focusTable, history, toast, afterReset],
+    [sql, setSql, session, txStatus, runningSessions, runs, runEditor, cancel, loadSql, getEditorText, schema, schemaError, refreshSchema, status, statusError, refreshStatus, solved, markSolved, focusTable, history, toast, afterReset, saved, savedLoaded, savedError, refreshSaved, createSaved, updateSaved, deleteSaved, linkedSavedId, setLinkedSavedId, savedViewId, navTab, setNavTab, saveDialogOpen],
   );
   return <PlaygroundContext.Provider value={value}>{children}</PlaygroundContext.Provider>;
 }

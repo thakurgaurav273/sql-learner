@@ -88,7 +88,7 @@ Press **Ctrl+C** in the terminal. This stops the app and the database container.
 
 | Area | What it's for |
 |---|---|
-| **Lessons** (far left) | 20 lessons in 5 sections. `2/5` shows how many exercises you've solved; ✓ means all of them. |
+| **Lessons / Saved** (far left) | **Lessons:** 20 lessons in 5 sections; `2/5` shows how many exercises you've solved, ✓ means all of them. **Saved:** your own notebook of saved queries with notes. |
 | **Lesson** (left) | The explanation, runnable code blocks (**Load into editor** or **▶ Run**), join pictures, example queries, and exercises at the bottom. |
 | **Query editor** (middle) | Write SQL here. Autocomplete knows your tables and columns. **Cmd+Enter** (Mac) or **Ctrl+Enter** (Windows/Linux) runs it. |
 | **Results** (under the editor) | One block per statement: the rows, each column's type, the row count and timing. `NULL` is shown in grey italics, so you can't mistake it for text. |
@@ -107,6 +107,7 @@ Drag the borders between panels to resize them. **«** and **»** hide or show t
 4. **Scroll down to the exercises.** Click **✎ Start in editor**, write your answer under the task, then click **✓ Check my answer**.
 5. **Wrong answer? Read the feedback.** It shows exactly which rows you're missing or have too many of. Still stuck? Use **Hint**, then **Show solution**.
 6. **Try to break the database:** `DELETE FROM customers;` or `DROP TABLE orders CASCADE;`. Then click **Reset DB**: everything is back in under a second.
+7. **Save a query you like** with **Cmd+S** (Ctrl+S on Windows/Linux) and write a note about what it does. It goes into the **Saved** tab, your personal notebook.
 
 Then work through the lessons in order, or jump straight to the topic you need.
 
@@ -216,9 +217,18 @@ It refreshes after you create, alter or drop something.
 
 <br clear="right">
 
+### Save your own queries, with notes
+
+Wrote a query you want to keep, or finally understood something? Press **Cmd+S** (Ctrl+S on Windows/Linux) or click **Save query** above the editor. Give it a title and write notes about what it does or what you learned. Notes support Markdown, including ` ```sql ` blocks that get their own **Run** button.
+
+- Everything you save is in the **Saved** tab next to Lessons, with search. Click one to read its notes; **Open in editor** loads it, **Run** runs it, **Edit notes** changes the title or notes.
+- While a saved query is open in the editor, a chip above the editor shows its name. An amber dot means you changed it, and **Cmd/Ctrl+S** saves the change (with **Undo** in the confirmation). To start a fresh query instead, click **Clear** or load a lesson example.
+- Saves can be linked to the lesson you were on, and **Export** downloads all of them as one `.sql` file with your notes as comments.
+- They're stored in `data/saved-queries.json` in the project folder, **not** in the database, so **Reset DB never touches them**. That folder is in `.gitignore`, so your notes are never committed by accident.
+
 ### Light and dark
 
-The app follows your system's light or dark setting.
+The app follows your system's light or dark setting by default. Use the sun/moon button in the top bar to pick Light, Dark or System.
 
 ![The app in dark mode, showing a window-function lesson and query](docs/screenshots/dark-mode.png)
 
@@ -383,6 +393,7 @@ The data is generated deterministically, so everyone gets exactly the same rows 
 | Autocomplete a table or column | Just type, or press **Ctrl+Space** |
 | Stop a long-running query | Click **Stop** (queries are also stopped automatically after 30 seconds) |
 | Reuse an earlier query | **History ▾** above the editor |
+| Save the query with notes | **Cmd+S** (Mac) or **Ctrl+S**: opens the Save dialog, or saves changes to the query that's open |
 | Jump to the error | **Show in editor** in the error box |
 | See a table's data | **▶ SELECT \*** in the schema panel |
 
@@ -416,6 +427,7 @@ The editor remembers what you typed, even after a reload. Results show at most 1
 | The data looks wrong or tables are missing | Click **Reset DB**. |
 | You want a completely fresh start | `npm run db:destroy` (deletes the database container and its data), then `npm run dev`. |
 | Your exercise progress is gone | Progress is stored in your browser. A different browser, a private window or clearing site data starts from zero. |
+| `Could not read …/saved-queries.json` | The notebook file was edited by hand and is no longer valid JSON. Fix it (or move it away to start a fresh notebook); the app never overwrites a broken file. |
 
 **On Windows (PowerShell)**, set options like this instead: `$env:PORT=4401; npm run dev`
 
@@ -436,7 +448,7 @@ Only for the first start, to download the npm packages and the PostgreSQL image.
 Yes. `SELECT`, joins, `GROUP BY`, subqueries, CTEs and window functions work almost the same in every modern database. A few things shown here are PostgreSQL extras (for example `RETURNING`, `ON CONFLICT`, `FILTER`, `LATERAL`, `date_trunc`), and other databases have their own versions of them.
 
 **Where is my data stored?**
-In a Docker volume named `sql-playground_pgdata`. It survives restarts; `npm run db:destroy` deletes it.
+The practice database lives in a Docker volume named `sql-playground_pgdata`; it survives restarts, and `npm run db:destroy` deletes it. Your saved queries and notes are in `data/saved-queries.json` in the project folder: copy that file to back them up or move them to another computer. Exercise progress and editor contents are kept in your browser.
 
 **How do I reset my exercise progress?**
 Clear the site data for `localhost:4400` in your browser (or open the app in a private window to start over).
@@ -561,11 +573,13 @@ sql-learner/
 │   ├── dev.mjs               `npm run dev`: Docker, database, server, browser
 │   ├── generate-seed.mjs     regenerates the sample data (deterministic)
 │   └── validate-content.mjs  runs every lesson snippet and exercise solution
-├── server/                   Express API: run queries, schema, Reset DB, exercise checks
+├── server/                   Express API: run queries, schema, Reset DB, exercise checks, saved queries
 ├── src/
-│   ├── components/           editor, results, schema panel, join visualizer, exercises
+│   ├── components/           editor, results, schema panel, join visualizer, exercises, notebook
+│   │   └── ui/               shadcn/ui components
 │   └── content/lessons/      all lessons and exercises
+├── data/                     your saved queries (created on first save, git-ignored)
 └── docs/screenshots/         the images in this README
 ```
 
-Built with PostgreSQL 18, Node.js, Express, React, Vite and CodeMirror.
+Built with PostgreSQL 18, Node.js, Express, React, Vite, Tailwind CSS, shadcn/ui and CodeMirror.

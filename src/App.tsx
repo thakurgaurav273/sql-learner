@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useTheme, type Theme } from '@/lib/theme';
 import {
   BookOpen,
+  Bookmark,
   Check,
   CircleAlert,
   Database,
@@ -19,7 +20,10 @@ import { lessons } from './content';
 import { LessonView } from './components/LessonView';
 import { Workspace } from './components/Workspace';
 import { SchemaPanel } from './components/SchemaPanel';
-import { PanelHeader, IconButton } from './components/PanelHeader';
+import { IconButton } from './components/PanelHeader';
+import { SavedList, SavedQueryView } from './components/Notebook';
+import { SaveQueryDialog } from './components/SaveQueryDialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useDrag, useStoredNumber } from './components/layout';
 import { api } from './api';
 import { cn } from '@/lib/utils';
@@ -50,6 +54,7 @@ export function App() {
 const NAV_W = 256;
 
 function Shell() {
+  const { navTab, setNavTab, savedViewId, setSavedViewId, saved, savedLoaded } = usePlayground();
   const [lessonId, setLessonId] = useState<string>(() => {
     const fromHash = location.hash.slice(1);
     if (lessons.some((l) => l.id === fromHash)) return fromHash;
@@ -60,6 +65,7 @@ function Shell() {
     }
   });
   const go = (id: string) => {
+    setSavedViewId(null);
     setLessonId(id);
     try {
       localStorage.setItem('sqlpg.lesson', id);
@@ -71,11 +77,25 @@ function Shell() {
   useEffect(() => {
     const onHash = () => {
       const id = location.hash.slice(1);
-      if (lessons.some((l) => l.id === id)) setLessonId(id);
+      if (id.startsWith('saved/')) setSavedViewId(decodeURIComponent(id.slice(6)));
+      else if (lessons.some((l) => l.id === id)) {
+        setSavedViewId(null);
+        setLessonId(id);
+      }
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+  }, [setSavedViewId]);
+
+  // the middle panel shows either the current lesson or a saved query
+  const viewing = savedViewId ? (saved.find((q) => q.id === savedViewId) ?? null) : null;
+  useEffect(() => {
+    if (savedLoaded && savedViewId && !viewing) setSavedViewId(null); // deleted or unknown id
+  }, [savedLoaded, savedViewId, viewing, setSavedViewId]);
+  useEffect(() => {
+    const want = savedViewId ? `#saved/${encodeURIComponent(savedViewId)}` : `#${lessonId}`;
+    if (location.hash !== want) history.replaceState(null, '', want);
+  }, [savedViewId, lessonId]);
 
   const idx = Math.max(0, lessons.findIndex((l) => l.id === lessonId));
   const lesson = lessons[idx];
@@ -103,16 +123,38 @@ function Shell() {
       <div className="flex min-h-0 flex-1">
         {navOpen ? (
           <aside className="flex flex-none flex-col border-r bg-surface" style={{ width: NAV_W }} data-panel="nav">
-            <PanelHeader icon={<BookOpen />} title="Lessons" actions={<IconButton label="Hide lessons" onClick={() => setNavOpen(false)} icon={<PanelLeftClose />} />} />
-            <ScrollArea className="min-h-0 flex-1">
-              <LessonNav current={lesson.id} go={go} />
-            </ScrollArea>
+            <Tabs value={navTab} onValueChange={(v) => setNavTab(v as 'lessons' | 'saved')} className="flex min-h-0 flex-1 flex-col gap-0">
+              <div className="flex h-11 flex-none items-center gap-2 border-b px-2.5">
+                <TabsList className="h-8 flex-1">
+                  <TabsTrigger value="lessons" className="gap-1.5 text-[12.5px]" data-tab="lessons">
+                    <BookOpen /> Lessons
+                  </TabsTrigger>
+                  <TabsTrigger value="saved" className="gap-1.5 text-[12.5px]" data-tab="saved">
+                    <Bookmark /> Saved
+                    {saved.length > 0 && <span className="rounded-full bg-primary/12 px-1.5 text-[10.5px] font-semibold text-primary tabular-nums">{saved.length}</span>}
+                  </TabsTrigger>
+                </TabsList>
+                <IconButton label="Hide sidebar" onClick={() => setNavOpen(false)} icon={<PanelLeftClose />} />
+              </div>
+              <TabsContent value="lessons" className="flex min-h-0 flex-1 flex-col">
+                <ScrollArea className="min-h-0 flex-1">
+                  <LessonNav current={viewing ? '' : lesson.id} go={go} />
+                </ScrollArea>
+              </TabsContent>
+              <TabsContent value="saved" className="flex min-h-0 flex-1 flex-col">
+                <SavedList />
+              </TabsContent>
+            </Tabs>
           </aside>
         ) : (
           <Rail side="left" label="Lessons" icon={<PanelLeftOpen />} onOpen={() => setNavOpen(true)} />
         )}
         <section className="flex min-w-0 flex-none flex-col bg-card" style={{ width: lessonWidth }} data-panel="lesson">
-          <LessonView lesson={lesson} index={idx} total={lessons.length} prev={lessons[idx - 1]} next={lessons[idx + 1]} go={go} />
+          {viewing ? (
+            <SavedQueryView query={viewing} backTo={`“${lesson.title}”`} onBack={() => setSavedViewId(null)} goLesson={go} />
+          ) : (
+            <LessonView lesson={lesson} index={idx} total={lessons.length} prev={lessons[idx - 1]} next={lessons[idx + 1]} go={go} />
+          )}
         </section>
         <div className={cn('gutter', lessonDrag.dragging && 'dragging')} onMouseDown={lessonDrag.onMouseDown} />
         <main className="flex min-w-0 flex-1 flex-col bg-card" data-panel="workspace">
@@ -129,6 +171,7 @@ function Shell() {
           <Rail side="right" label="Schema" icon={<PanelRightOpen />} onOpen={() => setSchemaOpen(true)} />
         )}
       </div>
+      <SaveQueryDialog lesson={lesson} />
     </div>
   );
 }
@@ -350,7 +393,7 @@ function TopBar() {
                   original seed. Every table, row, index and constraint goes back to exactly how it started; anything you created, changed or deleted is lost, and
                   open transactions in Session A/B are closed.
                 </p>
-                <p>Your editor contents and exercise progress are kept.</p>
+                <p>Your editor contents, saved queries and exercise progress are kept.</p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>

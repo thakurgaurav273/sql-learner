@@ -3,6 +3,7 @@ import express from 'express';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { bootstrap, runScript, getSchema, getStatus, resetDatabase, checkAnswer, cancelSession, config } from './db.mjs';
+import { savedQueriesRouter } from './saved.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
@@ -31,6 +32,7 @@ export async function startServer({ port = Number(process.env.PORT || 4400), log
     return r;
   }));
   app.post('/api/check', handle((req) => checkAnswer(req.body)));
+  app.use('/api/saved', savedQueriesRouter());
 
   const server = http.createServer(app);
   const { createServer: createViteServer } = await import('vite');

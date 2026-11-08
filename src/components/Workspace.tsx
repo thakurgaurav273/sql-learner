@@ -4,7 +4,8 @@ import { sql as sqlLang, PostgreSQL } from '@codemirror/lang-sql';
 import { keymap, EditorView } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 import { lintGutter } from '@codemirror/lint';
-import { ChevronDown, ChevronRight, CircleCheck, CircleX, Eraser, History, Info, Loader2, Play, SquareTerminal, TriangleAlert } from 'lucide-react';
+import { Bookmark, BookmarkPlus, ChevronDown, ChevronRight, CircleCheck, CircleX, Eraser, History, Info, Loader2, Play, Save, SquareTerminal, TriangleAlert } from 'lucide-react';
+import { sameSql } from './SaveQueryDialog';
 import { usePlayground } from '../state';
 import { DataTable } from './DataTable';
 import { ErrorBox } from './ErrorBox';
@@ -25,7 +26,11 @@ const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform)
 export const MOD = isMac ? '⌘' : 'Ctrl';
 
 export function Workspace() {
-  const { sql, setSql, session, setSession, txStatus, running, runEditor, cancel, editorView, schema, history, loadSql } = usePlayground();
+  const { sql, setSql, session, setSession, txStatus, running, runEditor, cancel, editorView, schema, history, loadSql, saved, linkedSavedId, setSaveDialogOpen, setSavedViewId, setNavTab, toast } =
+    usePlayground();
+  const linked = saved.find((q) => q.id === linkedSavedId) ?? null;
+  const dirty = !!linked && !sameSql(sql, linked.sql);
+  const openSave = () => (sql.trim() ? setSaveDialogOpen(true) : toast('Nothing to save yet: write a query first.', 'info'));
   const runRef = useRef(runEditor);
   runRef.current = runEditor;
   const [editorHeight, setEditorHeight] = useStoredNumber('sqlpg.editorH', 300);
@@ -53,15 +58,37 @@ export function Workspace() {
   return (
     <div className="flex min-h-0 flex-1 flex-col" ref={wrapRef}>
       <PanelHeader
+        className="@container"
         icon={<SquareTerminal />}
         title="Query editor"
+        extra={
+          linked && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => {
+                    setNavTab('saved');
+                    setSavedViewId(linked.id);
+                  }}
+                  className="ml-1 flex min-w-0 items-center gap-1.5 rounded-md border bg-background px-2 py-0.5 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+                  data-testid="linked-chip"
+                >
+                  <Bookmark className="size-3 flex-none text-primary" />
+                  <span className="max-w-44 truncate">{linked.title}</span>
+                  {dirty && <span className="size-1.5 flex-none rounded-full bg-warning" />}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{dirty ? 'Saved query open in the editor, with unsaved changes. Press ⌘S / Ctrl+S to save.' : 'Saved query open in the editor'}</TooltipContent>
+            </Tooltip>
+          )
+        }
         actions={
-          <span className="hidden items-center gap-1.5 text-[12px] text-muted-foreground lg:flex">
+          <span className="hidden items-center gap-1.5 text-[12px] whitespace-nowrap text-muted-foreground @[500px]:flex">
             <KbdGroup>
               <Kbd>{MOD}</Kbd>
               <Kbd>↵</Kbd>
             </KbdGroup>
-            to run · select text to run just that part
+            to run<span className="hidden @[720px]:inline"> · select text to run just that part</span>
           </span>
         }
       />
@@ -132,6 +159,17 @@ export function Workspace() {
         </DropdownMenu>
 
         <span className="flex-1" />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="sm" onClick={openSave} className="relative" data-action="save" aria-label="Save query">
+              {linked ? <Save /> : <BookmarkPlus />} <span className="hidden @[600px]:inline">{linked ? 'Save' : 'Save query'}</span>
+              {dirty && <span className="absolute -top-1 -right-1 size-2.5 rounded-full border-2 border-card bg-warning" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {linked ? `Save changes to “${linked.title}”` : 'Save this query with notes'} ({MOD}S)
+          </TooltipContent>
+        </Tooltip>
         <IconButton label="Clear the editor" icon={<Eraser />} onClick={() => loadSql('')} />
       </div>
 
